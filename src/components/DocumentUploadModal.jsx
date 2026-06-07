@@ -126,7 +126,8 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
           uploadData.append('files', file);
         });
 
-        const response = await fetch('https://docsuncorp.suncorplv.workers.dev', {
+        // ОНОВЛЕНИЙ РЯДОК: Додано /upload до URL
+        const response = await fetch('https://docsuncorp.suncorplv.workers.dev/upload', {
           method: 'POST',
           body: uploadData
         });
