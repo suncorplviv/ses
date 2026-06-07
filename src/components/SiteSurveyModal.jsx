@@ -129,7 +129,7 @@ export default function SiteSurveyModal({ dealId, isOpen, onClose, onSave }) {
       return;
     }
 
-    const baseUrl = 'http://192.168.0.226:8000';
+    const baseUrl = 'https://docsuncorp.suncorplv.workers.dev/';
     const uploadPromises = [];
 
     Object.entries(uploadFiles).forEach(([category, filesArray]) => {

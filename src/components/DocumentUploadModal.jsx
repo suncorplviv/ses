@@ -126,7 +126,7 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
           uploadData.append('files', file);
         });
 
-        const response = await fetch('http://192.168.0.226:8000/upload', {
+        const response = await fetch('https://docsuncorp.suncorplv.workers.dev/', {
           method: 'POST',
           body: uploadData
         });
