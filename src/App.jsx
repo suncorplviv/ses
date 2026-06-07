@@ -1,47 +1,35 @@
-import React from "react";
+import React from 'react';
 import {
-  BrowserRouter,
+  HashRouter,
   Routes,
   Route,
-  Navigate,
-} from "react-router-dom";
+  Navigate
+} from 'react-router-dom';
 
-import { AuthProvider, useAuth } from "./AuthProvider";
-import AuthPage from "./AuthPage";
+import { AuthProvider, useAuth } from './AuthProvider';
+import AuthPage from './AuthPage';
 
-import SolarLayout from "./SolarLayout";
+import SolarLayout from './SolarLayout';
 
-import FinanceDashboard from "./pages/FinanceDashboard";
-import Clients from "./pages/ClientsPage";
-import Deals from "./pages/Deals";
-import DealDetails from "./pages/DealDetails";
-import PaymentsPage from "./pages/PaymentsPage";
-import Inventory from "./pages/Inventory";
-import Staff from "./pages/Staff";
-import MyTasks from "./pages/MyTasks";
-import Settings from "./pages/Settings";
-
-const isManagementRole = (role = "") => {
-  const normalizedRole = role.toLowerCase();
-
-  return (
-    normalizedRole.includes("директор") ||
-    normalizedRole.includes("засновник") ||
-    normalizedRole.includes("менеджер")
-  );
-};
-
-const LoadingScreen = () => (
-  <div className="flex h-screen w-full items-center justify-center bg-slate-50">
-    <div className="h-12 w-12 animate-spin rounded-full border-4 border-amber-500/30 border-t-amber-500" />
-  </div>
-);
+import FinanceDashboard from './pages/FinanceDashboard';
+import Clients from './pages/ClientsPage';
+import Deals from './pages/Deals';
+import DealDetails from './pages/DealDetails';
+import PaymentsPage from './pages/PaymentsPage';
+import Inventory from './pages/Inventory';
+import Staff from './pages/Staff';
+import MyTasks from './pages/MyTasks';
+import Settings from './pages/Settings';
 
 const ProtectedRoute = () => {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return <LoadingScreen />;
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-slate-50">
+        <div className="w-12 h-12 border-4 border-amber-500/30 border-t-amber-500 rounded-full animate-spin"></div>
+      </div>
+    );
   }
 
   if (!user) {
@@ -54,15 +42,18 @@ const ProtectedRoute = () => {
 const RoleBasedRedirect = () => {
   const { employeeProfile, loading } = useAuth();
 
-  if (loading) {
-    return <LoadingScreen />;
-  }
+  if (loading) return null;
 
-  const role = employeeProfile?.role || "";
+  const role = employeeProfile?.role?.toLowerCase() || '';
+
+  const isManagement =
+    role.includes('директор') ||
+    role.includes('засновник') ||
+    role.includes('менеджер');
 
   return (
     <Navigate
-      to={isManagementRole(role) ? "/overview" : "/tasks"}
+      to={isManagement ? "/overview" : "/tasks"}
       replace
     />
   );
@@ -71,13 +62,16 @@ const RoleBasedRedirect = () => {
 const ManagementRoute = ({ children }) => {
   const { employeeProfile, loading } = useAuth();
 
-  if (loading) {
-    return <LoadingScreen />;
-  }
+  if (loading) return null;
 
-  const role = employeeProfile?.role || "";
+  const role = employeeProfile?.role?.toLowerCase() || '';
 
-  return isManagementRole(role)
+  const isManagement =
+    role.includes('директор') ||
+    role.includes('засновник') ||
+    role.includes('менеджер');
+
+  return isManagement
     ? children
     : <Navigate to="/tasks" replace />;
 };
@@ -85,36 +79,24 @@ const ManagementRoute = ({ children }) => {
 function App() {
   return (
     <AuthProvider>
-      <BrowserRouter basename="/ses">
+      <HashRouter>
         <Routes>
 
-          <Route
-            path="/auth"
-            element={<AuthPage />}
-          />
+          {/* Авторизація */}
+          <Route path="/auth" element={<AuthPage />} />
 
-          <Route
-            path="/"
-            element={<RoleBasedRedirect />}
-          />
+          {/* Головні редіректи */}
+          <Route path="/" element={<RoleBasedRedirect />} />
+          <Route path="/home" element={<RoleBasedRedirect />} />
 
-          <Route
-            path="/home"
-            element={<RoleBasedRedirect />}
-          />
-
+          {/* Захищені маршрути */}
           <Route element={<ProtectedRoute />}>
 
-            <Route
-              path="/tasks"
-              element={<MyTasks />}
-            />
+            {/* Доступні всім */}
+            <Route path="/tasks" element={<MyTasks />} />
+            <Route path="/staff" element={<Staff />} />
 
-            <Route
-              path="/staff"
-              element={<Staff />}
-            />
-
+            {/* Тільки керівництво */}
             <Route
               path="/overview"
               element={
@@ -180,13 +162,11 @@ function App() {
 
           </Route>
 
-          <Route
-            path="*"
-            element={<RoleBasedRedirect />}
-          />
+          {/* Якщо маршрут невідомий */}
+          <Route path="*" element={<RoleBasedRedirect />} />
 
         </Routes>
-      </BrowserRouter>
+      </HashRouter>
     </AuthProvider>
   );
 }
