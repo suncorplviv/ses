@@ -4,7 +4,7 @@ import { useAuth } from '../AuthProvider';
 import { 
   FaMoneyBillWave, FaTimes, FaPlus, FaCheckCircle, 
   FaWallet, FaCalendarAlt, FaCoins, FaHandHoldingUsd,
-  FaExclamationCircle
+  FaExclamationCircle, FaTrash
 } from 'react-icons/fa';
 
 export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen, onClose, onSave }) {
@@ -15,15 +15,20 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Стейт форми, який повністю відповідає таблиці payments з твого PaymentsPage.jsx
+  // Стейт форми
   const [formData, setFormData] = useState({
     amount_usd: '',
-    exchange_rate: '43.5', // Як у твоєму коді
+    exchange_rate: '43.5', 
     payment_method: 'Готівка',
     payment_category: 'Аванс',
     payment_date: new Date().toISOString().slice(0, 16),
     notes: ''
   });
+
+  // Стейт для видалення
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [paymentToDelete, setPaymentToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (isOpen && dealId) {
@@ -45,7 +50,7 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
         .from('payments')
         .select('*')
         .eq('deal_id', dealId)
-        .order('payment_date', { ascending: false }); // Сортуємо по даті платежу
+        .order('payment_date', { ascending: false }); 
 
       if (error) throw error;
       setPayments(data || []);
@@ -78,10 +83,9 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
       const rateValue = parseFloat(formData.exchange_rate);
       const uahValue = (usdValue * rateValue).toFixed(0);
 
-      // Формуємо об'єкт для БД точно як у PaymentsPage.jsx
       const payload = {
         deal_id: dealId,
-        client_id: clientId, // Обов'язкове поле з бази
+        client_id: clientId, 
         amount_usd: usdValue,
         exchange_rate: rateValue,
         amount_uah: parseFloat(uahValue),
@@ -95,7 +99,6 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
       const { error } = await supabase.from('payments').insert([payload]);
       if (error) throw error;
 
-      // Очищуємо поля
       setFormData(prev => ({ 
         ...prev, 
         amount_usd: '', 
@@ -112,11 +115,40 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
     }
   };
 
+  // ЛОГІКА ВИДАЛЕННЯ
+  const handleDeleteClick = (payment) => {
+    setPaymentToDelete(payment);
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!paymentToDelete) return;
+    setIsDeleting(true);
+    setErrorMessage('');
+    try {
+      const { error } = await supabase
+        .from('payments')
+        .delete()
+        .eq('id', paymentToDelete.id);
+
+      if (error) throw error;
+
+      setIsDeleteModalOpen(false);
+      setPaymentToDelete(null);
+      await fetchDealPayments(); // Оновлюємо дані після видалення
+    } catch (error) {
+      console.error('Помилка при видаленні платежу:', error);
+      setErrorMessage('Помилка при видаленні платежу: ' + error.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[150] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-slate-100">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-slate-100 relative">
         
         {/* Хедер модалки */}
         <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white shrink-0 sm:rounded-t-3xl">
@@ -189,11 +221,12 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
               <div className="border border-slate-100 rounded-xl overflow-hidden max-h-40 overflow-y-auto custom-scrollbar">
                 <table className="w-full text-left text-xs border-collapse min-w-[500px]">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-400 font-black uppercase tracking-widest border-b border-slate-100 text-[9px] sticky top-0">
+                    <tr className="bg-slate-50 text-slate-400 font-black uppercase tracking-widest border-b border-slate-100 text-[9px] sticky top-0 z-10">
                       <th className="p-3 pl-4">Дата</th>
                       <th className="p-3">Сума</th>
                       <th className="p-3">Метод / Тип</th>
-                      <th className="p-3 pr-4">Примітка</th>
+                      <th className="p-3">Примітка</th>
+                      <th className="p-3 pr-4 text-center">Дії</th> {/* Нова колонка */}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
@@ -213,8 +246,18 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
                             <div><span className="px-2 py-0.5 bg-slate-100 rounded text-[9px] text-slate-600 font-black uppercase">{p.payment_method}</span></div>
                             <div><span className="px-2 py-0.5 bg-amber-50 rounded text-[9px] text-amber-700 font-black uppercase border border-amber-100">{p.payment_category}</span></div>
                           </td>
-                          <td className="p-3 pr-4 font-medium text-slate-500 max-w-[150px] truncate" title={p.notes}>
+                          <td className="p-3 font-medium text-slate-500 max-w-[120px] truncate" title={p.notes}>
                             {p.notes || '—'}
+                          </td>
+                          <td className="p-3 pr-4 text-center">
+                            {/* Кнопка видалення */}
+                            <button
+                              onClick={() => handleDeleteClick(p)}
+                              className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                              title="Видалити платіж"
+                            >
+                              <FaTrash size={12} />
+                            </button>
                           </td>
                         </tr>
                       );
@@ -333,6 +376,49 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
             ПІДТВЕРДИТИ КОНТРОЛЬ ОПЛАТ
           </button>
         </div>
+
+        {/* МОДАЛЬНЕ ВІКНО ПІДТВЕРДЖЕННЯ ВИДАЛЕННЯ */}
+        {/* z-index: 200, щоб бути поверх поточної модалки */}
+        {isDeleteModalOpen && paymentToDelete && (
+          <div className="absolute inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 sm:rounded-3xl">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in">
+              <div className="p-5 bg-rose-50 border-b border-rose-100 flex items-center justify-center">
+                <div className="p-3 bg-rose-100 rounded-full text-rose-500 shadow-sm">
+                  <FaTrash size={28} />
+                </div>
+              </div>
+              
+              <div className="p-6 text-center space-y-4 bg-white">
+                <h3 className="text-xl font-black text-slate-800 tracking-tight">Видалити платіж?</h3>
+                <p className="text-sm font-medium text-slate-500 leading-relaxed">
+                  Ви дійсно хочете безповоротно видалити транзакцію на суму <br/>
+                  <span className="text-lg font-black text-rose-500 block mt-2">
+                    {Number(paymentToDelete.amount_usd).toLocaleString()} $
+                  </span>
+                </p>
+              </div>
+              
+              <div className="p-4 border-t border-slate-100 flex gap-3 bg-slate-50">
+                <button
+                  onClick={() => {
+                    setIsDeleteModalOpen(false);
+                    setPaymentToDelete(null);
+                  }}
+                  className="flex-1 py-3 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 hover:text-slate-800 rounded-xl transition-colors uppercase tracking-widest shadow-sm"
+                >
+                  Скасувати
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  disabled={isDeleting}
+                  className="flex-1 py-3 bg-rose-500 hover:bg-rose-600 text-white rounded-xl font-black text-xs uppercase tracking-widest transition-colors disabled:opacity-50 shadow-lg shadow-rose-500/20"
+                >
+                  {isDeleting ? 'Видалення...' : 'Видалити'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>

@@ -2,12 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../AuthProvider'; 
-import * as XLSX from 'xlsx'; // Додано імпорт бібліотеки xlsx
+import * as XLSX from 'xlsx';
 import { 
   FaPlus, FaSearch, FaTimes, FaFilter, FaMoneyBillWave, 
   FaUserTie, FaBuilding, FaUser, FaWallet, 
   FaArrowRight, FaExclamationCircle, FaCheckCircle, FaCommentAlt,
-  FaChevronLeft, FaChevronRight, FaChartLine, FaFileDownload
+  FaChevronLeft, FaChevronRight, FaChartLine, FaFileDownload,
+  FaTrash // Додано імпорт іконки кошика
 } from 'react-icons/fa';
 
 export default function PaymentsPage() {
@@ -47,6 +48,11 @@ export default function PaymentsPage() {
   const [dealSearchText, setDealSearchText] = useState('');
   const [isDealDropdownOpen, setIsDealDropdownOpen] = useState(false);
   const [selectedDealInfo, setSelectedDealInfo] = useState(null);
+
+  // СТАНИ ДЛЯ ВИДАЛЕННЯ
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [paymentToDelete, setPaymentToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -188,14 +194,39 @@ export default function PaymentsPage() {
     }
   };
 
-  // ОНОВЛЕНО: ЕКСПОРТ В .xlsx ЧЕРЕЗ SHEETJS
+  // ЛОГІКА ВИДАЛЕННЯ
+  const handleDeleteClick = (payment) => {
+    setPaymentToDelete(payment);
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!paymentToDelete) return;
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase
+        .from('payments')
+        .delete()
+        .eq('id', paymentToDelete.id);
+
+      if (error) throw error;
+
+      setIsDeleteModalOpen(false);
+      setPaymentToDelete(null);
+      fetchData(); // Оновлюємо дані після видалення
+    } catch (error) {
+      alert('Помилка при видаленні платежу: ' + error.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const handleExportExcel = () => {
     if (filteredPayments.length === 0) {
       alert('Немає даних для експорту');
       return;
     }
 
-    // Формуємо масив об'єктів для Excel
     const exportData = filteredPayments.map(p => {
       const debtStatus = getDealDebtStatus(p.deals);
       const pDate = new Date(p.payment_date);
@@ -217,31 +248,17 @@ export default function PaymentsPage() {
       };
     });
 
-    // Створюємо аркуш з даних
     const worksheet = XLSX.utils.json_to_sheet(exportData);
 
-    // Задаємо ширину колонок для красивого відображення в Excel
     worksheet['!cols'] = [
-      { wch: 18 }, // Дата транзакції
-      { wch: 25 }, // Клієнт
-      { wch: 12 }, // ID Клієнта
-      { wch: 30 }, // Угода / Об'єкт
-      { wch: 12 }, // ID Угоди
-      { wch: 20 }, // Сума USD
-      { wch: 15 }, // Курс
-      { wch: 20 }, // Сума UAH
-      { wch: 20 }, // Форма оплати
-      { wch: 22 }, // Призначення
-      { wch: 28 }, // Борг
-      { wch: 20 }, // Менеджер
-      { wch: 40 }  // Примітки
+      { wch: 18 }, { wch: 25 }, { wch: 12 }, { wch: 30 }, { wch: 12 }, 
+      { wch: 20 }, { wch: 15 }, { wch: 20 }, { wch: 20 }, { wch: 22 }, 
+      { wch: 28 }, { wch: 20 }, { wch: 40 }
     ];
 
-    // Створюємо нову книгу і додаємо туди аркуш
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Платежі");
 
-    // Зберігаємо файл
     const fileName = `payments_export_${new Date().toLocaleDateString('uk-UA')}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   };
@@ -285,7 +302,6 @@ export default function PaymentsPage() {
               <FaFilter size={12}/> Фільтри
             </button>
 
-            {/* Кнопка Експорту XLSX */}
             <button 
               onClick={handleExportExcel}
               className="flex-1 sm:flex-none p-3 flex items-center justify-center gap-2 rounded-xl border bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 font-bold text-xs uppercase tracking-wider transition-colors"
@@ -378,7 +394,7 @@ export default function PaymentsPage() {
       {/* 3. ТАБЛИЦЯ ТРАНЗАКЦІЙ */}
       <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden relative z-0 flex flex-col">
         <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left border-collapse min-w-[950px]">
+          <table className="w-full text-left border-collapse min-w-[1000px]">
             <thead>
               <tr className="bg-slate-50/50 border-b border-slate-100 text-slate-500 text-[10px] font-black uppercase tracking-widest">
                 <th className="p-5">Дата транзакції</th>
@@ -387,13 +403,14 @@ export default function PaymentsPage() {
                 <th className="p-5">Тип та Призначення</th>
                 <th className="p-5 text-center">Стан угоди</th>
                 <th className="p-5 text-right">Менеджер</th>
+                <th className="p-5 text-center">Дії</th> {/* Нова колонка */}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                <tr><td colSpan="6" className="text-center p-12 text-slate-400 font-bold uppercase tracking-widest animate-pulse">Завантаження каси...</td></tr>
+                <tr><td colSpan="7" className="text-center p-12 text-slate-400 font-bold uppercase tracking-widest animate-pulse">Завантаження каси...</td></tr>
               ) : paginatedPayments.length === 0 ? (
-                <tr><td colSpan="6" className="text-center p-12 font-bold text-sm text-slate-400">Платежів не знайдено за обраними критеріями</td></tr>
+                <tr><td colSpan="7" className="text-center p-12 font-bold text-sm text-slate-400">Платежів не знайдено за обраними критеріями</td></tr>
               ) : (
                 paginatedPayments.map((payment) => {
                   const debtStatus = getDealDebtStatus(payment.deals);
@@ -447,6 +464,17 @@ export default function PaymentsPage() {
                         )}
                       </td>
                       <td className="p-5 text-right text-[11px] font-black text-slate-400 uppercase tracking-widest">{payment.users?.full_name || 'Система'}</td>
+                      
+                      {/* Кнопка видалення */}
+                      <td className="p-5 text-center">
+                        <button
+                          onClick={() => handleDeleteClick(payment)}
+                          className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                          title="Видалити платіж"
+                        >
+                          <FaTrash size={14} />
+                        </button>
+                      </td>
                     </tr>
                   );
                 })
@@ -664,6 +692,48 @@ export default function PaymentsPage() {
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* 5. МОДАЛЬНЕ ВІКНО ПІДТВЕРДЖЕННЯ ВИДАЛЕННЯ */}
+      {isDeleteModalOpen && paymentToDelete && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-5 bg-rose-50 border-b border-rose-100 flex items-center justify-center">
+              <div className="p-3 bg-rose-100 rounded-full text-rose-500 shadow-sm">
+                <FaTrash size={28} />
+              </div>
+            </div>
+            
+            <div className="p-6 text-center space-y-4 bg-white">
+              <h3 className="text-xl font-black text-slate-800 tracking-tight">Видалити платіж?</h3>
+              <p className="text-sm font-medium text-slate-500 leading-relaxed">
+                Ви дійсно хочете безповоротно видалити транзакцію на суму <br/>
+                <span className="text-lg font-black text-rose-500 block mt-2">
+                  {Number(paymentToDelete.amount_usd).toLocaleString()} $
+                </span>
+              </p>
+            </div>
+            
+            <div className="p-4 border-t border-slate-100 flex gap-3 bg-slate-50">
+              <button
+                onClick={() => {
+                  setIsDeleteModalOpen(false);
+                  setPaymentToDelete(null);
+                }}
+                className="flex-1 py-3 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 hover:text-slate-800 rounded-xl transition-colors uppercase tracking-widest shadow-sm"
+              >
+                Скасувати
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={isDeleting}
+                className="flex-1 py-3 bg-rose-500 hover:bg-rose-600 text-white rounded-xl font-black text-xs uppercase tracking-widest transition-colors disabled:opacity-50 shadow-lg shadow-rose-500/20"
+              >
+                {isDeleting ? 'Видалення...' : 'Видалити'}
+              </button>
+            </div>
           </div>
         </div>
       )}
