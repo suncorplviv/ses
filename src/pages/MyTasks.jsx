@@ -21,7 +21,7 @@ import DealAdditionalMaterials from '../components/DealAdditionalMaterials';
 import DeliveryOrganizationModal from '../modals/DeliveryOrganizationModal';
 import DealPaymentsModal from '../components/DealPaymentsModal'; 
 
-// Ключ localStorage для відновлення активного завдання між вкладками та перезавантаженнями
+// Ключ localStorage для відновлення активного завдання між вкладками
 const STORAGE_KEY = 'myTasks_selectedTaskId';
 
 export default function MyTasks() {
@@ -63,17 +63,17 @@ export default function MyTasks() {
   const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false);
   const [isPaymentsModalOpen, setIsPaymentsModalOpen] = useState(false); 
 
-  // Регулярні вирази для типів завдань (ОНОВЛЕНО: додано "оперативно" та "закупка")
+  // РЕГУЛЯРНІ ВИРАЗИ ДЛЯ ТИПІВ ЗАВДАНЬ (Розширено)
   const surveyRegex             = /замір|огляд|виїзд/i;
   const contactRegex            = /зв.язатися|контакт|кваліфікаці|оперативно/i;
   const techSolutionRegex       = /рішення|розкладка|фем|схема|креслення|візуалізація/i;
   const cpRegex                 = /комерційн|кп/i;
-  const documentCloseRegex      = /підписання|закриття угоди|договір/i;
+  const documentCloseRegex      = /підписання|закриття угоди|договір|документ/i;
   const deliveryRegex           = /доставк|транспорт|відвантаж|завантаж/i;
   const installRegex            = /монтажн|бригад|фізичн|змонтовано/i;
   const inventoryRegex          = /резерв|обладнан|специфікаці/i;
   const additionalMaterialsRegex = /додатков.*матеріал|розхідник|закупка/i;
-  const paymentRegex            = /оплат|платіж|каса|рахунок/i; 
+  const paymentRegex            = /оплат|платіж|каса|рахунок|фінанс/i; 
 
   // Похідні флаги
   const isSelectedTaskSmart = selectedTask ? (
@@ -206,11 +206,11 @@ export default function MyTasks() {
         setDeliveries([]);
       }
 
-      // 3. Платежі
+      // 3. Платежі (Клієнтські) - ВИПРАВЛЕНО ТАБЛИЦЮ НА 'payments'
       if (task.title.match(paymentRegex)) {
         const { data: pays } = await supabase
-          .from('deal_payments')
-          .select('*')
+          .from('payments')
+          .select('*, users(full_name)')
           .eq('deal_id', task.deal_id)
           .order('created_at', { ascending: false });
         setPayments(pays || []);
@@ -654,25 +654,38 @@ export default function MyTasks() {
                           {payments.length > 0 && (
                             <div className="w-full mt-2 space-y-3 animate-fade-in border-t border-teal-100 pt-4">
                               <div className="flex justify-between items-center">
-                                <p className="text-[9px] font-black text-teal-600 uppercase tracking-widest">Історія транзакцій</p>
-                                <p className="text-[10px] font-black text-slate-700 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
-                                  Бюджет угоди: <span className="text-emerald-600 ml-1">{selectedTask.deals?.final_budget?.toLocaleString() || 0} $</span>
+                                <p className="text-[9px] font-black text-teal-600 uppercase tracking-widest">Історія транзакцій клієнта</p>
+                                <p className="text-[10px] font-black text-slate-700 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
+                                  Бюджет угоди: <span className="text-emerald-600 text-xs">${selectedTask.deals?.final_budget?.toLocaleString() || 0}</span>
                                 </p>
                               </div>
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 {payments.map((pay) => (
                                   <div key={pay.id} className="bg-white border border-teal-100 p-4 rounded-2xl shadow-sm flex justify-between items-center hover:border-teal-300 transition-colors">
                                     <div>
-                                      <div className="font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
-                                        {pay.amount?.toLocaleString()} {pay.currency || '$'}
+                                      {/* ДВО-ВАЛЮТНИЙ ДИСПЛЕЙ ОПЛАТИ (ОНОВЛЕНО) */}
+                                      <div className="font-bold text-slate-800 text-sm flex flex-col gap-0.5 mb-1.5">
+                                        <span className="text-emerald-600 flex items-center gap-1">+ ${Number(pay.amount_usd || 0).toLocaleString('uk-UA')}</span>
+                                        {pay.amount_uah > 0 && (
+                                          <span className="text-[10px] text-slate-500 font-bold border-l border-slate-200 pl-2">
+                                            +{Number(pay.amount_uah).toLocaleString('uk-UA')} ₴
+                                          </span>
+                                        )}
                                       </div>
-                                      <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">{pay.payment_method || 'Готівка / Рахунок'}</div>
+                                      
+                                      <div className="flex gap-1.5 mt-1">
+                                        <span className="text-[9px] text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded font-black uppercase tracking-wider border border-teal-100">
+                                          {pay.payment_category || 'Оплата'}
+                                        </span>
+                                        <span className="text-[9px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-bold uppercase border border-slate-200">
+                                          {pay.payment_method || 'Готівка / Рахунок'}
+                                        </span>
+                                      </div>
+                                      {pay.notes && <div className="text-[10px] text-slate-500 mt-1.5 italic line-clamp-1" title={pay.notes}>"{pay.notes}"</div>}
                                     </div>
                                     <div className="text-right">
                                       <div className="text-[10px] font-black text-slate-400">{new Date(pay.payment_date || pay.created_at).toLocaleDateString('uk-UA')}</div>
-                                      <span className="inline-block mt-1 text-[9px] font-black uppercase px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200">
-                                        Проведено
-                                      </span>
+                                      <div className="text-[8px] font-bold text-slate-400 mt-1 uppercase tracking-widest">{pay.users?.full_name || 'Менеджер'}</div>
                                     </div>
                                   </div>
                                 ))}
@@ -977,7 +990,6 @@ export default function MyTasks() {
 
       {/* МОДАЛЬНІ ВІКНА */}
       
-      {/* ОНОВЛЕНО: Додано onSave, щоб завдання автоматично завершувалось */}
       <SiteSurveyModal 
         dealId={surveyDealId} 
         isOpen={isSurveyOpen}
@@ -989,7 +1001,6 @@ export default function MyTasks() {
         }}
       />
       
-      {/* ОНОВЛЕНО: Додано onSave, щоб завдання автоматично завершувалось */}
       <InitialContactModal 
         dealId={contactDealId} 
         taskId={contactTaskId} 

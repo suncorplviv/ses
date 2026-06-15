@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { FaTimes, FaHardHat, FaSpinner, FaClipboardList } from 'react-icons/fa';
+import { FaTimes, FaHardHat, FaSpinner, FaClipboardList, FaMapMarkerAlt } from 'react-icons/fa';
 
 export default function ReserveDetailsModal({ isOpen, onClose, productId }) {
   const [loading, setLoading] = useState(true);
@@ -15,19 +15,21 @@ export default function ReserveDetailsModal({ isOpen, onClose, productId }) {
   const fetchReserves = async () => {
     setLoading(true);
     try {
-      // Додали 'title' в блок deals, щоб витягнути назву угоди
+      // Змінено джерело даних з deal_bom на deal_reservations
+      // щоб отримати реальне фізичне розташування товару
       const { data, error } = await supabase
-        .from('deal_bom')
+        .from('deal_reservations')
         .select(`
           id,
-          quantity_planned,
+          quantity,
           status,
           created_at,
           deals ( custom_id, title ),
-          users ( full_name )
+          users!deal_reservations_responsible ( full_name ),
+          stock_locations ( name )
         `)
         .eq('product_id', productId)
-        .in('status', ['allocated', 'partially_allocated', 'planned'])
+        .in('status', ['confirmed', 'pending', 'partially_issued'])
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -94,9 +96,17 @@ export default function ReserveDetailsModal({ isOpen, onClose, productId }) {
                         СЕС №{item.deals?.custom_id || 'Невідомо'} {item.deals?.title ? `— ${item.deals.title}` : ''}
                       </span>
                     </div>
+                    
+                    <div className="flex items-center gap-1.5 mt-2">
+                      <FaMapMarkerAlt className="text-emerald-500 shrink-0" size={10} />
+                      <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-md uppercase">
+                        {item.stock_locations?.name || 'Невідомий склад'}
+                      </span>
+                    </div>
+
                     <div className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-widest flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span className="bg-slate-100 px-2 py-0.5 rounded text-slate-500">
-                        Додав(ла): {item.users?.full_name || 'Система'}
+                        Відповідальний: {item.users?.full_name || 'Система'}
                       </span>
                       <span>•</span>
                       <span>{new Date(item.created_at).toLocaleDateString('uk-UA')}</span>
@@ -105,14 +115,14 @@ export default function ReserveDetailsModal({ isOpen, onClose, productId }) {
                   
                   <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-2 shrink-0 border-t border-slate-100 sm:border-0 pt-3 sm:pt-0 mt-1 sm:mt-0">
                     <span className="inline-flex items-center justify-center px-4 py-1.5 bg-amber-50 text-amber-700 rounded-xl text-sm font-black border border-amber-100 shadow-sm">
-                      {item.quantity_planned} шт.
+                      {item.quantity} шт.
                     </span>
                     <div className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
-                      item.status.includes('allocated') 
+                      item.status === 'confirmed' || item.status === 'partially_issued'
                         ? 'bg-sky-50 text-sky-600' 
                         : 'bg-slate-100 text-slate-500'
                     }`}>
-                      {item.status.includes('allocated') ? 'Заброньовано' : 'В плані'}
+                      {item.status === 'confirmed' || item.status === 'partially_issued' ? 'Заброньовано' : 'В плані'}
                     </div>
                   </div>
                 </div>

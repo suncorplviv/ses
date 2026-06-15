@@ -25,9 +25,9 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
   
   // ФІНАНСОВІ СТЕЙТИ (МУЛЬТИВАЛЮТНІСТЬ)
   const [itemCurrency, setItemCurrency] = useState('USD');
-  const [exchangeRate, setExchangeRate] = useState(41.0); // Дефолтний курс
-  const [unitCostPrice, setUnitCostPrice] = useState(''); // Собівартість
-  const [unitSalePrice, setUnitSalePrice] = useState(''); // Ціна продажу
+  const [exchangeRate, setExchangeRate] = useState(41.0); 
+  const [unitCostPrice, setUnitCostPrice] = useState(''); 
+  const [unitSalePrice, setUnitSalePrice] = useState(''); 
 
   const [isAdding, setIsAdding] = useState(false);
   const [addNotes, setAddNotes] = useState('');
@@ -44,6 +44,12 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
   const [isSupplierDropdownOpen, setIsSupplierDropdownOpen] = useState(false);
   const [isAddingSupplier, setIsAddingSupplier] = useState(false);
   const supplierDropdownRef = useRef(null);
+
+  // НОВІ СТЕЙТИ: ВИБІР СКЛАДУ ДЛЯ РЕЗЕРВУ
+  const [isReserveModalOpen, setIsReserveModalOpen] = useState(false);
+  const [reserveItem, setReserveItem] = useState(null);
+  const [reserveLocations, setReserveLocations] = useState([]);
+  const [isReserving, setIsReserving] = useState(false);
 
   const getCurrentUserId = async () => {
     if (employeeProfile?.id) return employeeProfile.id;
@@ -172,7 +178,6 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
     if (addLineType === 'service' && !serviceName.trim()) return alert('Вкажіть назву послуги.');
     if (!(qty > 0)) return alert('Кількість має бути більшою за нуль.');
 
-    // Розрахунок доларових еквівалентів
     const costUsd = itemCurrency === 'USD' ? cost : (cost / rate);
     const saleUsd = itemCurrency === 'USD' ? sale : (sale / rate);
 
@@ -242,19 +247,62 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
     else fetchBom();
   };
 
-  const handleReserve = async (item) => {
-    const quantityToReserve = Math.min(Number(item.quantity_shortage || 0), Number(item.available_qty || 0));
-    if (quantityToReserve <= 0) return alert('Немає вільного залишку для резерву. Зробіть закупку.');
+  // НОВЕ: Відкриття модалки вибору складу для резерву
+  const openReserveModal = async (item) => {
+    setReserveItem(item);
+    setIsReserveModalOpen(true);
+    setReserveLocations([]);
+    
+    // Шукаємо залишки по всіх активних складах
+    const { data, error } = await supabase
+      .from('stock_balances')
+      .select(`
+        location_id,
+        quantity,
+        reserved_quantity,
+        stock_locations!inner ( name, type )
+      `)
+      .eq('product_id', item.product_id)
+      .eq('stock_locations.type', 'warehouse');
+      
+    if (data) {
+      const mapped = data.map(d => {
+        const available = Number(d.quantity) - Number(d.reserved_quantity);
+        return {
+          location_id: d.location_id,
+          location_name: d.stock_locations.name,
+          available: available,
+          // За замовчуванням пропонуємо зарезервувати дефіцит або максимум доступного
+          reserveQty: Math.min(Number(item.quantity_shortage || 0), available)
+        };
+      }).filter(d => d.available > 0);
+      setReserveLocations(mapped);
+    }
+  };
 
+  // НОВЕ: Логіка самого резервування з конкретного складу
+  const executeReserve = async (locId, qty) => {
+    if (qty <= 0) return alert('Вкажіть кількість більше нуля.');
+    setIsReserving(true);
     try {
       const userId = await getCurrentUserId();
       const { error } = await supabase.rpc('erp_reserve_bom_item', {
-        p_bom_id: item.bom_id, p_location_id: null, p_quantity: quantityToReserve, p_performed_by: userId, p_notes: `Резерв з угоди`
+        p_bom_id: reserveItem.bom_id, 
+        p_location_id: locId, // Передаємо вибраний склад
+        p_quantity: qty, 
+        p_performed_by: userId, 
+        p_notes: `Резерв з угоди`
       });
       if (error) throw error;
-      await supabase.from('deal_activity_log').insert([{ deal_id: dealId, user_id: userId, action: `Зарезервовано: ${item.product_name}` }]);
+      
+      await supabase.from('deal_activity_log').insert([{ deal_id: dealId, user_id: userId, action: `Зарезервовано: ${reserveItem.product_name} (${qty} шт)` }]);
+      setIsReserveModalOpen(false);
       fetchBom();
-    } catch (error) { alert('Помилка резервування: ' + error.message); }
+    } catch (error) { 
+      alert('Помилка резервування: ' + error.message); 
+    } finally {
+      setIsReserving(false);
+    }
   };
 
   const handleCancelReserve = async (item) => {
@@ -499,7 +547,7 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
                             )}
 
                             {canReserve && (
-                              <button onClick={() => handleReserve(item)} className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white text-[9px] font-black uppercase rounded-lg transition-all shadow-sm">
+                              <button onClick={() => openReserveModal(item)} className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white text-[9px] font-black uppercase rounded-lg transition-all shadow-sm">
                                 {hasOpenReserve ? 'Дорезерв' : 'Резерв'}
                               </button>
                             )}
@@ -524,6 +572,73 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
           </div>
         </div>
       </div>
+
+      {/* МОДАЛКА ВИБОРУ СКЛАДУ ДЛЯ РЕЗЕРВУ */}
+      {isReserveModalOpen && reserveItem && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in custom-scrollbar overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col relative overflow-hidden">
+            <div className="p-6 border-b border-slate-100 bg-slate-900 text-white flex justify-between items-center shrink-0">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
+                  <FaBoxOpen className="text-emerald-400"/> Вибір складу для резерву
+                </h3>
+                <p className="text-[10px] font-medium mt-1 text-slate-400 line-clamp-1">{reserveItem.product_name}</p>
+              </div>
+              <button type="button" onClick={() => setIsReserveModalOpen(false)} className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors">
+                <FaTimes size={16}/>
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4 bg-slate-50/50 max-h-[60vh] overflow-y-auto custom-scrollbar">
+              <div className="bg-white border border-slate-200 rounded-xl p-4 flex justify-between items-center shadow-sm">
+                <span className="text-xs font-bold text-slate-500 uppercase">Поточна потреба:</span>
+                <span className="text-sm font-black text-rose-600">{reserveItem.quantity_shortage} {reserveItem.unit}</span>
+              </div>
+
+              {reserveLocations.length === 0 ? (
+                <div className="text-center py-8 text-slate-400 font-bold text-xs uppercase tracking-widest">
+                  Немає вільного залишку на жодному складі
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {reserveLocations.map((loc, idx) => (
+                    <div key={loc.location_id} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col gap-3">
+                      <div className="flex justify-between items-center border-b border-slate-50 pb-2">
+                        <span className="text-sm font-black text-slate-800">{loc.location_name}</span>
+                        <span className="text-[10px] font-black uppercase bg-emerald-50 text-emerald-600 px-2 py-1 rounded-md">
+                          Доступно: {loc.available} {reserveItem.unit}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
+                          <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">До резерву:</label>
+                          <input 
+                            type="number" step="any" min="0.1" max={loc.available}
+                            value={loc.reserveQty} 
+                            onChange={(e) => {
+                              const newLocs = [...reserveLocations];
+                              newLocs[idx].reserveQty = e.target.value;
+                              setReserveLocations(newLocs);
+                            }}
+                            className="w-full text-sm font-black p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                        <button 
+                          onClick={() => executeReserve(loc.location_id, parseFloat(loc.reserveQty))}
+                          disabled={isReserving || !loc.reserveQty || loc.reserveQty <= 0 || loc.reserveQty > loc.available}
+                          className="mt-4 px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-300 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-95 whitespace-nowrap"
+                        >
+                          {isReserving ? 'Резервуємо...' : 'Зарезервувати'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {isAddModalOpen && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in custom-scrollbar overflow-y-auto">

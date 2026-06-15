@@ -15,14 +15,12 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
 
   // Визначення доступних категорій на основі назви завдання
   const availableCategories = useMemo(() => {
-    // 1. Якщо категорію передали явно (і це не "Інше")
     if (category && category !== 'Інше' && category !== 'Інший документ') {
       return [category];
     }
 
     const title = (taskTitle || '').toLowerCase();
 
-    // 2. Специфічні завдання для сонячних проектів
     if (title.includes('комерційн') || title.includes('кп')) {
       return ['Комерційна пропозиція (КП)'];
     } 
@@ -50,7 +48,6 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
       ];
     }
 
-    // 3. Дефолтний список для інших завдань
     return [
       'Комерційна пропозиція (КП)',
       'Технічне рішення / Схема',
@@ -67,6 +64,12 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
       setFilesByCategory({});
     }
   }, [isOpen]);
+
+  // Функція для очищення та формування стандартизованого імені файлу
+  const getStandardizedName = (catName, originalName) => {
+    const cleanCat = catName.replace(/[\/\\?%*:|"<>\s]/g, '-');
+    return `${cleanCat}_Угода_${dealId}_${originalName}`;
+  };
 
   const handleFileChange = (catName, e) => {
     const files = Array.from(e.target.files);
@@ -115,7 +118,6 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
     setIsSubmitting(true);
 
     try {
-      // Відправляємо окремі запити для кожної категорії, де є файли
       const uploadPromises = categoriesToUpload.map(async (catName) => {
         const files = filesByCategory[catName];
         const uploadData = new FormData();
@@ -123,10 +125,11 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
         uploadData.append('category', catName); 
         
         files.forEach(file => {
-          uploadData.append('files', file);
+          // Застосовуємо розпізнане та стандартизоване ім'я файлу для завантаження
+          const finalName = getStandardizedName(catName, file.name);
+          uploadData.append('files', file, finalName);
         });
 
-        // ОНОВЛЕНИЙ РЯДОК: Додано /upload до URL
         const response = await fetch('https://docsuncorp.suncorplv.workers.dev/upload', {
           method: 'POST',
           body: uploadData
@@ -140,7 +143,6 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
 
       const results = await Promise.all(uploadPromises);
 
-      // Формуємо загальний лог для Supabase
       const logDetails = results.map(r => `${r.count} шт. (${r.category})`).join(', ');
       await supabase.from('deal_activity_log').insert([{
         deal_id: dealId,
@@ -203,11 +205,10 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
                 Необхідні документи
               </h4>
               <p className="text-xs text-slate-500">
-                Завантажте файли у відповідні блоки нижче.
+                Завантажте файли у відповідні блоки нижче. Назви будуть стандартизовані автоматично.
               </p>
             </div>
 
-            {/* Grid layout для блоків категорій */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {availableCategories.map(cat => {
                 const categoryFiles = filesByCategory[cat] || [];
@@ -242,24 +243,34 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
                        />
                     </label>
 
-                    {/* Список вибраних файлів для цієї категорії */}
+                    {/* Список вибраних файлів з відображенням майбутньої стандартизованої назви */}
                     {hasFiles && (
-                      <div className="space-y-1.5 mt-auto">
-                        {categoryFiles.map((file, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-2 bg-white border border-emerald-100 rounded-lg shadow-sm">
-                            <div className="flex items-center gap-2 overflow-hidden">
-                              <FaFileAlt className="text-emerald-500 shrink-0" size={10}/>
-                              <span className="text-[10px] font-semibold text-slate-700 truncate">{file.name}</span>
+                      <div className="space-y-2 mt-auto">
+                        {categoryFiles.map((file, idx) => {
+                          const systemName = getStandardizedName(cat, file.name);
+                          return (
+                            <div key={idx} className="flex flex-col p-2.5 bg-white border border-emerald-100 rounded-xl shadow-sm space-y-1">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 overflow-hidden">
+                                  <FaFileAlt className="text-emerald-500 shrink-0" size={12}/>
+                                  <span className="text-[10px] font-bold text-slate-700 truncate" title={file.name}>
+                                    {file.name}
+                                  </span>
+                                </div>
+                                <button 
+                                  type="button" 
+                                  onClick={() => handleRemoveFile(cat, idx)}
+                                  className="text-slate-400 hover:text-rose-500 p-1 rounded-md transition-colors shrink-0"
+                                >
+                                  <FaTrash size={10}/>
+                                </button>
+                              </div>
+                              <div className="text-[9px] font-semibold text-slate-400 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded truncate" title={systemName}>
+                                <span className="text-purple-600 font-bold">Системна назва:</span> {systemName}
+                              </div>
                             </div>
-                            <button 
-                              type="button" 
-                              onClick={() => handleRemoveFile(cat, idx)}
-                              className="text-slate-400 hover:text-rose-500 p-1 rounded-md transition-colors shrink-0"
-                            >
-                              <FaTrash size={10}/>
-                            </button>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

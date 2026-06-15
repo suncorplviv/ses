@@ -4,13 +4,15 @@ import { useAuth } from '../AuthProvider';
 import { 
   FaPlus, FaTools, FaTrash, FaSearch, FaTimes, 
   FaArrowLeft, FaCheckCircle, FaClipboardList, 
-  FaCheckSquare, FaRegSquare, FaSolarPanel, FaBoxOpen, FaSave, FaExchangeAlt
+  FaCheckSquare, FaRegSquare, FaSolarPanel, FaBoxOpen, FaSave, FaExchangeAlt, FaFileInvoiceDollar
 } from 'react-icons/fa';
+
+// Імпортуємо модалку для завантаження документів
+import DocumentUploadModal from './DocumentUploadModal';
 
 export default function DealAdditionalMaterials({ dealId, onBack, onCompleteTask }) {
   const { employeeProfile } = useAuth();
   
-  // ДОДАНО: Перевірка прав доступу до фінансів
   const canSeeFinances = ['Менеджер з продажу', 'Директор', 'Засновник компанії'].includes(employeeProfile?.role);
   
   const [mainEquipment, setMainEquipment] = useState([]);
@@ -22,9 +24,7 @@ export default function DealAdditionalMaterials({ dealId, onBack, onCompleteTask
   const [productsList, setProductsList] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   
-  // НОВИЙ СТЕЙТ: Вибрана категорія з чек-листа
   const [selectedCategory, setSelectedCategory] = useState(null); 
-  
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [quantity, setQuantity] = useState('');
   
@@ -49,6 +49,9 @@ export default function DealAdditionalMaterials({ dealId, onBack, onCompleteTask
     cost_price: '',
     sale_price: ''
   });
+
+  // СТЕЙТ ДЛЯ МОДАЛКИ ЗАВАНТАЖЕННЯ ФАЙЛІВ
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
 
   // ЧЕК-ЛИСТ ПРИВ'ЯЗАНИЙ ДО PRODUCT_TYPE (БД)
   const tzChecklist = [
@@ -181,8 +184,6 @@ export default function DealAdditionalMaterials({ dealId, onBack, onCompleteTask
 
   const handleAddToQueue = () => {
     const qty = parseFloat(quantity);
-    // Беремо ціни зі стейту. Навіть якщо інженер їх не бачить (input прихований), 
-    // туди вже підставились дефолтні значення з бази при кліку на товар.
     const cost = parseFloat(unitCostPrice) || 0;
     const sale = parseFloat(unitSalePrice) || 0;
     const rate = parseFloat(exchangeRate) || 1;
@@ -190,7 +191,6 @@ export default function DealAdditionalMaterials({ dealId, onBack, onCompleteTask
     if (!selectedProduct) return alert('Оберіть товар зі списку.');
     if (!(qty > 0)) return alert('Кількість має бути більшою за нуль.');
 
-    // Розрахунок USD
     const costUsd = itemCurrency === 'USD' ? cost : (cost / rate);
     const saleUsd = itemCurrency === 'USD' ? sale : (sale / rate);
 
@@ -316,21 +316,30 @@ export default function DealAdditionalMaterials({ dealId, onBack, onCompleteTask
           <FaArrowLeft size={12}/> Назад
         </button>
         
-        <div className="text-center mx-4">
+        <div className="text-center mx-4 hidden sm:block">
           <h2 className="text-sm md:text-base font-black text-slate-900 uppercase tracking-tight flex items-center justify-center gap-2">
             <FaTools className="text-purple-500"/> Підготовка до монтажу
           </h2>
           <p className="text-[10px] font-bold text-slate-400 mt-0.5">Формування додаткових матеріалів</p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* НОВА КНОПКА ПРИКРІПЛЕННЯ ФАЙЛУ */}
+          <button 
+            onClick={() => setIsUploadModalOpen(true)} 
+            className="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md transition-colors active:scale-95 whitespace-nowrap"
+            title="Прикріпити рахунок від постачальника"
+          >
+            <FaFileInvoiceDollar size={14}/> <span className="hidden md:inline">Рахунок / Файл</span>
+          </button>
+
           {isAllCovered && onCompleteTask && (
             <button onClick={onCompleteTask} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md shadow-emerald-500/30">
-              <FaCheckCircle size={14}/> Завершити етап
+              <FaCheckCircle size={14}/> <span className="hidden sm:inline">Завершити етап</span>
             </button>
           )}
-          <button onClick={() => setIsAddModalOpen(true)} className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md shadow-purple-600/30 active:scale-95 whitespace-nowrap">
-            <FaPlus size={12}/> Додати матеріали
+          <button onClick={() => setIsAddModalOpen(true)} className="bg-purple-600 hover:bg-purple-700 text-white px-4 sm:px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md shadow-purple-600/30 active:scale-95 whitespace-nowrap">
+            <FaPlus size={12}/> <span className="hidden sm:inline">Додати матеріали</span>
           </button>
         </div>
       </div>
@@ -457,7 +466,7 @@ export default function DealAdditionalMaterials({ dealId, onBack, onCompleteTask
         </div>
       </div>
 
-      {/* МОДАЛКА ДОДАВАННЯ */}
+      {/* МОДАЛКА ДОДАВАННЯ МАТЕРІАЛІВ */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in custom-scrollbar overflow-y-auto">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl flex flex-col relative overflow-hidden h-[85vh]">
@@ -589,7 +598,7 @@ export default function DealAdditionalMaterials({ dealId, onBack, onCompleteTask
                   )}
                 </div>
 
-                {/* ФУТЕР ІЗ ЦІНАМИ (ЗАЛЕЖНО ВІД РОЛІ) */}
+                {/* ФУТЕР ІЗ ЦІНАМИ */}
                 {selectedProduct && (
                   <div className="pt-4 border-t border-slate-200 animate-fade-in shrink-0">
                     <div className={`grid ${canSeeFinances ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'} gap-3 mb-3`}>
@@ -755,7 +764,6 @@ export default function DealAdditionalMaterials({ dealId, onBack, onCompleteTask
                 </select>
               </div>
 
-              {/* ВИБІР ВАЛЮТИ ТА ЦІНИ ДЛЯ НОВОГО ТОВАРУ (ТІЛЬКИ ДЛЯ МЕНЕДЖЕРІВ) */}
               {canSeeFinances && (
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-3">
                    <div>
@@ -799,6 +807,17 @@ export default function DealAdditionalMaterials({ dealId, onBack, onCompleteTask
           </form>
         </div>
       )}
+
+      {/* МОДАЛКА ЗАВАНТАЖЕННЯ ДОКУМЕНТІВ */}
+      <DocumentUploadModal
+        dealId={dealId}
+        taskId={null} 
+        taskTitle="Закупівля додаткових матеріалів"
+        category="Рахунок-фактура"
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onSave={() => setIsUploadModalOpen(false)}
+      />
     </div>
   );
 }

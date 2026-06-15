@@ -4,7 +4,7 @@ import { useAuth } from '../AuthProvider';
 import { 
   FaCheck, FaTimes, FaTools, 
   FaClipboardCheck, FaHardHat, FaChevronDown, FaChevronUp, FaCommentDots,
-  FaArrowLeft, FaConciergeBell, FaCheckCircle
+  FaArrowLeft, FaConciergeBell, FaCheckCircle, FaTruckLoading, FaSpinner, FaBoxOpen
 } from 'react-icons/fa';
 
 export default function DealInstallation({ dealId, onProgressUpdate, onBack, onCompleteTask }) {
@@ -19,6 +19,12 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
   const [mountData, setMountData] = useState({ amount: '', notes: '' });
   const [isMounting, setIsMounting] = useState(false);
   const [isMountNotesOpen, setIsMountNotesOpen] = useState(false);
+
+  // НОВІ СТЕЙТИ: ЕКСПРЕС-ПРИЙОМКА ПРЯМОЇ ПОСТАВКИ
+  const [isReceiveModalOpen, setIsReceiveModalOpen] = useState(false);
+  const [receiveItem, setReceiveItem] = useState(null);
+  const [receiveData, setReceiveData] = useState({ qty: '', poItemId: '', locationId: '', maxQty: 0 });
+  const [isReceiving, setIsReceiving] = useState(false);
 
   const getCurrentUserId = async () => {
     if (employeeProfile?.id) return employeeProfile.id;
@@ -64,6 +70,7 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
     fetchBom();
   }, [dealId]);
 
+  // ====================== ЛОГІКА МОНТАЖУ ======================
   const openMountModal = (item) => {
     setMountItem(item);
     const remainingToMount = Number(item.quantity_planned || 0) - Number(item.quantity_mounted || 0);
@@ -154,30 +161,90 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
 
   const handleMarkServiceDone = async (item) => {
     if (!window.confirm(`Відмітити послугу "${item.product_name}" як повністю надану?`)) return;
-    
     try {
       const userId = await getCurrentUserId();
       const remainingToMount = Number(item.quantity_planned || 0) - Number(item.quantity_mounted || 0);
-      
       const { error } = await supabase.rpc('erp_mount_bom_item', {
-        p_bom_id: item.bom_id, 
-        p_quantity: remainingToMount, 
-        p_reported_by: userId, 
-        p_installation_id: null, 
-        p_notes: 'Послуга надана (зафіксовано вручну)'
+        p_bom_id: item.bom_id, p_quantity: remainingToMount, p_reported_by: userId, p_installation_id: null, p_notes: 'Послуга надана (зафіксовано вручну)'
       });
-      
+      if (error) throw error;
+      await supabase.from('deal_activity_log').insert([{ deal_id: dealId, user_id: userId, action: `Надано послугу: ${item.product_name}` }]);
+      fetchBom();
+    } catch (err) { alert("Помилка фіксації послуги: " + err.message); }
+  };
+
+  // ====================== ЛОГІКА ЕКСПРЕС-ПРИЙОМКИ ======================
+  const openReceiveModal = async (item) => {
+    setIsReceiveModalOpen(true);
+    setReceiveItem({ ...item, isLoadingStatus: true });
+    setReceiveData({ qty: '', poItemId: '', locationId: '', maxQty: 0 });
+
+    // Шукаємо відкрите замовлення для цього товару
+    const { data, error } = await supabase
+      .from('deal_bom_allocations')
+      .select(`
+        purchase_order_item_id, 
+        location_id, 
+        purchase_order_items (quantity_ordered, quantity_received)
+      `)
+      .eq('bom_id', item.bom_id)
+      .eq('source_type', 'purchase_order')
+      .not('purchase_order_item_id', 'is', null);
+
+    if (!error && data && data.length > 0) {
+      // Знаходимо першу алокацію, де ще не все прийнято
+      const validAlloc = data.find(d => {
+         const qO = Number(d.purchase_order_items?.quantity_ordered || 0);
+         const qR = Number(d.purchase_order_items?.quantity_received || 0);
+         return qO > qR;
+      });
+
+      if (validAlloc) {
+         const remaining = Number(validAlloc.purchase_order_items.quantity_ordered) - Number(validAlloc.purchase_order_items.quantity_received);
+         setReceiveData({
+           poItemId: validAlloc.purchase_order_item_id,
+           locationId: validAlloc.location_id, 
+           maxQty: remaining,
+           qty: remaining // Пропонуємо прийняти все, що залишилось
+         });
+         setReceiveItem({ ...item, isLoadingStatus: false, found: true });
+         return;
+      }
+    }
+    
+    setReceiveItem({ ...item, isLoadingStatus: false, found: false });
+  };
+
+  const submitReceive = async (e) => {
+    e.preventDefault();
+    const qty = parseFloat(receiveData.qty);
+    if (qty <= 0 || qty > receiveData.maxQty) return alert(`Введіть кількість від 0.1 до ${receiveData.maxQty}`);
+
+    setIsReceiving(true);
+    try {
+      const userId = await getCurrentUserId();
+      // Викликаємо системну процедуру прийомки
+      const { error } = await supabase.rpc('erp_receive_stock', {
+        p_product_id: receiveItem.product_id,
+        p_quantity: qty,
+        p_to_location_id: receiveData.locationId || null,
+        p_performed_by: userId,
+        p_purchase_order_item_id: receiveData.poItemId,
+        p_notes: 'Експрес-прийомка перед монтажем'
+      });
+
       if (error) throw error;
 
       await supabase.from('deal_activity_log').insert([{ 
-        deal_id: dealId, 
-        user_id: userId, 
-        action: `Надано послугу: ${item.product_name}` 
+        deal_id: dealId, user_id: userId, action: `Прийнято на об'єкт: ${receiveItem.product_name} (${qty})` 
       }]);
 
+      setIsReceiveModalOpen(false);
       fetchBom();
     } catch (err) {
-      alert("Помилка фіксації послуги: " + err.message);
+      alert("Помилка прийомки товару: " + err.message);
+    } finally {
+      setIsReceiving(false);
     }
   };
 
@@ -191,10 +258,7 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
     <div className="flex flex-col h-full bg-slate-50 min-h-screen">
       
       <div className="bg-white mx-4 md:mx-6 mt-4 px-5 py-3 border border-slate-200 rounded-2xl flex justify-between items-center shadow-sm shrink-0">
-        <button 
-          onClick={onBack} 
-          className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 rounded-xl text-xs font-black uppercase tracking-widest transition-colors"
-        >
+        <button onClick={onBack} className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 rounded-xl text-xs font-black uppercase tracking-widest transition-colors">
           <FaArrowLeft size={12}/> Назад
         </button>
         
@@ -204,10 +268,7 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
         
         <div className="flex items-center justify-end w-[130px]">
           {isAllMounted && onCompleteTask && (
-            <button 
-              onClick={onCompleteTask} 
-              className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex justify-center items-center gap-2 transition-all shadow-md shadow-emerald-500/30"
-            >
+            <button onClick={onCompleteTask} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex justify-center items-center gap-2 transition-all shadow-md shadow-emerald-500/30">
               <FaCheckCircle size={14}/> Завершити
             </button>
           )}
@@ -217,10 +278,11 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
       {/* ОСНОВНИЙ КОНТЕНТ: СПИСОК ЗАВДАНЬ */}
       <div className="p-4 md:p-6 space-y-6 flex-1 overflow-y-auto">
         <div className="animate-fade-in space-y-4">
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-            <p className="text-xs text-slate-500 font-medium">
-              Фіксуйте кількість обладнання, що була фактично встановлена на об'єкті. Для послуг та робіт просто відмічайте їх як виконані.
-            </p>
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-start gap-3">
+             <FaTools className="text-slate-400 mt-0.5 shrink-0"/>
+             <p className="text-xs text-slate-500 font-medium">
+               Фіксуйте кількість обладнання, що була встановлена на об'єкті. Якщо товар приїхав прямо на об'єкт від постачальника, спочатку натисніть <strong className="text-amber-600">"Прийняти поставку"</strong>, а потім звітуйте про його монтаж.
+             </p>
           </div>
           
           <div className="grid grid-cols-1 gap-4">
@@ -235,6 +297,7 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
                 const isComplete = qAct >= qPlan;
                 
                 const readyOnSite = isService ? 0 : getReadyOnSiteQty(item);
+                const pendingDeliveryQty = Math.max(Number(item.quantity_ordered || 0) - Number(item.quantity_received || 0), 0);
                 const canMount = isService ? !isComplete : (!isComplete && (readyOnSite > 0 || Number(item.quantity_reserved || 0) > 0));
 
                 return (
@@ -268,8 +331,11 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
 
                       {!isComplete && !isService && (
                         <div className="flex gap-4 mt-3 text-[10px] font-bold text-slate-500 border-t border-slate-100 pt-2">
-                          <p>Доступно на об'єкті: <span className="text-slate-800">{readyOnSite}</span></p>
+                          <p>Доступно на об'єкті: <span className="text-slate-800 font-black">{readyOnSite}</span></p>
                           <p>В резерві складу: <span className="text-slate-800">{item.quantity_reserved || 0}</span></p>
+                          {pendingDeliveryQty > 0 && (
+                            <p className="text-amber-600">В дорозі від постачальника: <span className="font-black">{pendingDeliveryQty}</span></p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -284,13 +350,25 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
                             <FaCheck size={14}/> Відмітити як надану
                           </button>
                         ) : (
-                          <button 
-                            onClick={() => openMountModal(item)}
-                            disabled={!canMount}
-                            className="w-full md:w-auto px-6 py-3 bg-slate-900 hover:bg-emerald-600 disabled:bg-slate-100 disabled:text-slate-400 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-sm flex items-center justify-center gap-2"
-                          >
-                            <FaTools size={14}/> {canMount ? 'Звіт про монтаж' : 'Очікує доставки'}
-                          </button>
+                          <div className="flex flex-col gap-2 w-full md:w-auto">
+                            {/* КНОПКА ЕКСПРЕС-ПРИЙОМКИ */}
+                            {pendingDeliveryQty > 0 && (
+                              <button 
+                                onClick={() => openReceiveModal(item)}
+                                className="w-full md:w-auto px-6 py-2.5 bg-amber-50 hover:bg-amber-500 text-amber-700 hover:text-slate-900 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 border border-amber-200 hover:border-amber-500"
+                              >
+                                <FaTruckLoading size={14}/> Прийняти поставку
+                              </button>
+                            )}
+                            
+                            <button 
+                              onClick={() => openMountModal(item)}
+                              disabled={!canMount}
+                              className="w-full md:w-auto px-6 py-2.5 bg-slate-900 hover:bg-emerald-600 disabled:bg-slate-100 disabled:text-slate-400 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-sm flex items-center justify-center gap-2"
+                            >
+                              <FaTools size={14}/> {canMount ? 'Звіт про монтаж' : (pendingDeliveryQty > 0 ? 'Спочатку прийміть товар' : 'Очікує доставки')}
+                            </button>
+                          </div>
                         )
                       ) : (
                         <span className="text-[10px] font-black text-emerald-600 uppercase bg-emerald-50 px-4 py-2 rounded-xl border border-emerald-200 flex items-center gap-2 w-full md:w-auto justify-center">
@@ -363,6 +441,65 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
                </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* МОДАЛКА: ЕКСПРЕС-ПРИЙОМКА ТОВАРУ */}
+      {isReceiveModalOpen && receiveItem && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden">
+            <div className="p-6 border-b border-slate-100 bg-slate-900 text-white flex justify-between items-center">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest mb-1 flex items-center gap-2">
+                  <FaBoxOpen className="text-amber-400"/> Прийом товару
+                </h3>
+                <p className="text-[10px] text-slate-400 font-medium line-clamp-1">{receiveItem.product_name}</p>
+              </div>
+              <button type="button" onClick={() => setIsReceiveModalOpen(false)} className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors">
+                <FaTimes size={16}/>
+              </button>
+            </div>
+            
+            <div className="p-6 bg-slate-50/50">
+              {receiveItem.isLoadingStatus ? (
+                <div className="flex flex-col items-center justify-center py-8 text-slate-400">
+                   <FaSpinner className="animate-spin mb-3 text-amber-500" size={24} />
+                   <span className="text-[10px] font-black uppercase tracking-widest">Перевірка замовлень...</span>
+                </div>
+              ) : !receiveItem.found ? (
+                <div className="text-center py-8">
+                  <FaTimes className="text-rose-400 text-4xl mx-auto mb-3 opacity-50" />
+                  <p className="text-xs font-bold text-slate-600">Не знайдено активного замовлення для цього товару.</p>
+                  <p className="text-[10px] text-slate-400 mt-2">Можливо, товар вже прийнято або замовлено не через пряму поставку.</p>
+                </div>
+              ) : (
+                <form id="expressReceiveForm" onSubmit={submitReceive}>
+                   <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">Скільки доставлено на об'єкт?</label>
+                   <div className="flex items-center gap-3">
+                     <input 
+                       type="number" step="any" required autoFocus
+                       max={receiveData.maxQty}
+                       value={receiveData.qty} onChange={(e) => setReceiveData({...receiveData, qty: e.target.value})}
+                       className="w-full text-xl font-black p-3 bg-white border border-amber-200 rounded-xl outline-none focus:border-amber-500 shadow-inner"
+                     />
+                     <span className="text-sm font-black text-slate-500 uppercase">{receiveItem.unit}</span>
+                   </div>
+                   <p className="text-[10px] font-bold text-slate-400 mt-3 text-center">
+                      Максимально до прийомки: <span className="text-slate-700 font-black">{receiveData.maxQty}</span>
+                   </p>
+                </form>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-100 flex gap-3 bg-white shrink-0">
+               <button type="button" onClick={() => setIsReceiveModalOpen(false)} className="flex-1 py-3 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors">Скасувати</button>
+               {receiveItem.found && !receiveItem.isLoadingStatus && (
+                 <button type="submit" form="expressReceiveForm" disabled={isReceiving} className="flex-1 py-3 text-xs font-black text-white bg-amber-500 hover:bg-amber-600 uppercase tracking-widest rounded-xl transition-colors shadow-lg shadow-amber-500/30">
+                   {isReceiving ? 'ОБРОБКА...' : 'ПРИЙНЯТИ'}
+                 </button>
+               )}
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -58,6 +58,11 @@ export default function PurchaseOrderModal({ isOpen, onClose, poToEdit, onSaveSu
   const [paymentForm, setPaymentForm] = useState({ amount: '', amount_uah: '', method: 'Рахунок ФОП', category: 'Часткова оплата', notes: '' });
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
 
+  // СТЕЙТ ДЛЯ РЕДАГУВАННЯ ІСНУЮЧИХ ПЛАТЕЖІВ
+  const [editingPaymentId, setEditingPaymentId] = useState(null);
+  const [editingPaymentForm, setEditingPaymentForm] = useState({ amount: '', amount_uah: '', method: '', category: '', notes: '' });
+  const [isUpdatingPayment, setIsUpdatingPayment] = useState(false);
+
   const getCurrentUserId = async () => {
     if (employeeProfile?.id) return employeeProfile.id;
     const { data: { user } } = await supabase.auth.getUser();
@@ -168,9 +173,26 @@ export default function PurchaseOrderModal({ isOpen, onClose, poToEdit, onSaveSu
     });
   };
 
-  // Валютний калькулятор для форми платежів
+  // Валютний калькулятор для форми створення платежів
   const handlePaymentAmountChange = (field, value) => {
     setPaymentForm(prev => {
+      const nextData = { ...prev, [field]: value };
+      const rate = parseFloat(poDetails?.exchange_rate || poToEdit?.exchange_rate) || 0;
+      
+      if (rate <= 0) return nextData;
+
+      if (field === 'amount') {
+        nextData.amount_uah = value ? (parseFloat(value) * rate).toFixed(2) : '';
+      } else if (field === 'amount_uah') {
+        nextData.amount = value ? (parseFloat(value) / rate).toFixed(2) : '';
+      }
+      return nextData;
+    });
+  };
+
+  // Валютний калькулятор для форми РЕДАГУВАННЯ платежів
+  const handleEditPaymentAmountChange = (field, value) => {
+    setEditingPaymentForm(prev => {
       const nextData = { ...prev, [field]: value };
       const rate = parseFloat(poDetails?.exchange_rate || poToEdit?.exchange_rate) || 0;
       
@@ -206,6 +228,22 @@ export default function PurchaseOrderModal({ isOpen, onClose, poToEdit, onSaveSu
 
   const handleRemoveItem = (productId) => setOrderItems(orderItems.filter(item => item.product_id !== productId));
   const handleItemQuantityChange = (productId, qty) => setOrderItems(orderItems.map(item => item.product_id === productId ? { ...item, quantity_ordered: qty } : item));
+
+  // Оновлення агрегованих сум оплати в PO
+  const updatePoPaymentTotals = async (poId) => {
+    const { data: allPayments } = await supabase
+      .from('purchase_order_payments')
+      .select('amount, amount_uah')
+      .eq('purchase_order_id', poId);
+      
+    const totalUsd = allPayments?.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) || 0;
+    const totalUah = allPayments?.reduce((sum, p) => sum + (parseFloat(p.amount_uah) || 0), 0) || 0;
+    
+    await supabase.from('purchase_orders').update({
+      amount_paid: totalUsd,
+      amount_paid_uah: totalUah
+    }).eq('id', poId);
+  };
 
   const handleSaveSubmit = async (e) => {
     e.preventDefault();
@@ -283,11 +321,65 @@ export default function PurchaseOrderModal({ isOpen, onClose, poToEdit, onSaveSu
         created_by: userId 
       }]);
 
+      await updatePoPaymentTotals(poToEdit.id);
       setPaymentForm({ amount: '', amount_uah: '', method: 'Рахунок ФОП', category: 'Часткова оплата', notes: '' });
       await fetchViewData();
       onSaveSuccess(); 
     } catch (error) { alert('Помилка: ' + error.message); } 
     finally { setIsSubmittingPayment(false); }
+  };
+
+  // ФУНКЦІЯ: Почати редагування платежу
+  const startEditingPayment = (payment) => {
+    setEditingPaymentId(payment.id);
+    setEditingPaymentForm({
+      amount: payment.amount || '',
+      amount_uah: payment.amount_uah || '',
+      method: payment.payment_method || '',
+      category: payment.payment_category || '',
+      notes: payment.notes || ''
+    });
+  };
+
+  // ФУНКЦІЯ: Зберегти відредагований платіж
+  const handleUpdatePayment = async () => {
+    const amount = parseFloat(editingPaymentForm.amount);
+    const amount_uah = parseFloat(editingPaymentForm.amount_uah);
+    if (!amount || isNaN(amount) || amount <= 0) return alert('Введіть коректну суму ($)');
+
+    setIsUpdatingPayment(true);
+    try {
+      await supabase.from('purchase_order_payments').update({
+        amount: amount,
+        amount_uah: amount_uah || 0,
+        payment_method: editingPaymentForm.method,
+        payment_category: editingPaymentForm.category,
+        notes: editingPaymentForm.notes || null
+      }).eq('id', editingPaymentId);
+
+      await updatePoPaymentTotals(poToEdit.id);
+      setEditingPaymentId(null);
+      await fetchViewData();
+      onSaveSuccess();
+    } catch (error) {
+      alert('Помилка оновлення платежу: ' + error.message);
+    } finally {
+      setIsUpdatingPayment(false);
+    }
+  };
+
+  // ФУНКЦІЯ: Видалити платіж
+  const handleDeletePayment = async (paymentId) => {
+    if (!window.confirm("Ви дійсно хочете видалити цей запис про оплату?")) return;
+    
+    try {
+      await supabase.from('purchase_order_payments').delete().eq('id', paymentId);
+      await updatePoPaymentTotals(poToEdit.id);
+      await fetchViewData();
+      onSaveSuccess();
+    } catch (error) {
+      alert('Помилка видалення платежу: ' + error.message);
+    }
   };
 
   const handleReceiveStock = async (item) => {
@@ -422,7 +514,7 @@ export default function PurchaseOrderModal({ isOpen, onClose, poToEdit, onSaveSu
                 )}
               </div>
 
-              {/* Двовалютна історія транзакцій */}
+              {/* Двовалютна історія транзакцій з РЕДАГУВАННЯМ ТА ВИДАЛЕННЯМ */}
               {payments.length > 0 && (
                 <div className="p-0 border-t border-slate-100">
                   <table className="w-full text-left text-sm">
@@ -430,29 +522,71 @@ export default function PurchaseOrderModal({ isOpen, onClose, poToEdit, onSaveSu
                       <tr>
                         <th className="p-3 pl-5"><FaHistory className="inline mb-0.5 mr-1"/> Транзакція</th>
                         <th className="p-3">Тип / Метод</th>
-                        <th className="p-3 text-right pr-5">Сума сплати</th>
+                        <th className="p-3 text-right pr-5">Сума / Дії</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {payments.map(pay => (
                         <tr key={pay.id} className="hover:bg-slate-50">
-                          <td className="p-3 pl-5">
-                            <span className="font-bold text-slate-800">{new Date(pay.payment_date).toLocaleDateString('uk-UA')}</span>
-                            <span className="text-[10px] text-slate-400 ml-2 font-mono">{new Date(pay.payment_date).toLocaleTimeString('uk-UA', {hour: '2-digit', minute:'2-digit'})}</span>
-                            <div className="text-[10px] font-bold text-slate-500 mt-0.5">Провів: {pay.users?.full_name} {pay.notes ? `(${pay.notes})` : ''}</div>
-                          </td>
-                          <td className="p-3">
-                            <div className="flex flex-col gap-1">
-                              <span className="text-[10px] font-black uppercase text-slate-700">{pay.payment_category || 'Оплата'}</span>
-                              <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[9px] font-bold w-fit">{pay.payment_method}</span>
-                            </div>
-                          </td>
-                          <td className="p-3 text-right pr-5">
-                            <div className="font-black text-emerald-600">+ ${Number(pay.amount || 0).toLocaleString()}</div>
-                            {pay.amount_uah > 0 && (
-                              <div className="text-[10px] text-slate-400 font-bold">+{Number(pay.amount_uah).toLocaleString()} ₴</div>
-                            )}
-                          </td>
+                          {editingPaymentId === pay.id ? (
+                            <td colSpan="3" className="p-3 bg-amber-50/50">
+                              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end p-2 bg-white border border-amber-200 rounded-xl shadow-sm">
+                                <div>
+                                  <label className="block text-[9px] font-bold text-slate-400 mb-1">Сума ($)</label>
+                                  <input type="number" min="0.01" step="any" value={editingPaymentForm.amount} onChange={e => handleEditPaymentAmountChange('amount', e.target.value)} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs outline-none focus:border-amber-500"/>
+                                </div>
+                                <div>
+                                  <label className="block text-[9px] font-bold text-slate-400 mb-1">Сума (₴)</label>
+                                  <input type="number" min="0" step="any" value={editingPaymentForm.amount_uah} onChange={e => handleEditPaymentAmountChange('amount_uah', e.target.value)} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs outline-none focus:border-amber-500"/>
+                                </div>
+                                <div>
+                                  <select value={editingPaymentForm.category} onChange={e => setEditingPaymentForm({...editingPaymentForm, category: e.target.value})} className="w-full px-1 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-bold mt-4">
+                                    <option>Часткова оплата</option><option>Аванс</option><option>Повна оплата</option><option>Під реалізацію</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <select value={editingPaymentForm.method} onChange={e => setEditingPaymentForm({...editingPaymentForm, method: e.target.value})} className="w-full px-1 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-bold mt-4">
+                                    <option>Рахунок ФОП</option><option>Готівка</option><option>Картка</option>
+                                  </select>
+                                </div>
+                                <div className="flex gap-2">
+                                   <button onClick={handleUpdatePayment} disabled={isUpdatingPayment} className="flex-1 py-1.5 bg-emerald-500 text-white rounded text-[10px] font-black shadow-sm hover:bg-emerald-600"><FaCheck className="mx-auto"/></button>
+                                   <button onClick={() => setEditingPaymentId(null)} className="flex-1 py-1.5 bg-slate-200 text-slate-600 rounded text-[10px] font-black hover:bg-slate-300"><FaTimes className="mx-auto"/></button>
+                                </div>
+                                <div className="col-span-2 md:col-span-5">
+                                  <input type="text" placeholder="Примітка..." value={editingPaymentForm.notes} onChange={e => setEditingPaymentForm({...editingPaymentForm, notes: e.target.value})} className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded text-[10px] outline-none focus:border-amber-500"/>
+                                </div>
+                              </div>
+                            </td>
+                          ) : (
+                            <>
+                              <td className="p-3 pl-5">
+                                <span className="font-bold text-slate-800">{new Date(pay.payment_date).toLocaleDateString('uk-UA')}</span>
+                                <span className="text-[10px] text-slate-400 ml-2 font-mono">{new Date(pay.payment_date).toLocaleTimeString('uk-UA', {hour: '2-digit', minute:'2-digit'})}</span>
+                                <div className="text-[10px] font-bold text-slate-500 mt-0.5">Провів: {pay.users?.full_name} {pay.notes ? `(${pay.notes})` : ''}</div>
+                              </td>
+                              <td className="p-3">
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[10px] font-black uppercase text-slate-700">{pay.payment_category || 'Оплата'}</span>
+                                  <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[9px] font-bold w-fit">{pay.payment_method}</span>
+                                </div>
+                              </td>
+                              <td className="p-3 text-right pr-5">
+                                <div className="flex justify-end items-center gap-3">
+                                  <div className="text-right">
+                                    <div className="font-black text-emerald-600">+ ${Number(pay.amount || 0).toLocaleString()}</div>
+                                    {pay.amount_uah > 0 && (
+                                      <div className="text-[10px] text-slate-400 font-bold">+{Number(pay.amount_uah).toLocaleString()} ₴</div>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-col gap-1 border-l border-slate-200 pl-3 ml-1">
+                                    <button onClick={() => startEditingPayment(pay)} className="text-slate-400 hover:text-amber-500 p-1 bg-slate-50 hover:bg-amber-50 rounded transition-colors" title="Редагувати"><FaEdit size={10}/></button>
+                                    <button onClick={() => handleDeletePayment(pay.id)} className="text-slate-400 hover:text-rose-500 p-1 bg-slate-50 hover:bg-rose-50 rounded transition-colors" title="Видалити"><FaTrash size={10}/></button>
+                                  </div>
+                                </div>
+                              </td>
+                            </>
+                          )}
                         </tr>
                       ))}
                     </tbody>
