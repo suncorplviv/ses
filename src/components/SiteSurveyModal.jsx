@@ -1,15 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { 
-  FaTimes, FaSave, FaBolt, FaHome, FaChargingStation, 
-  FaCamera, FaUpload, FaPlus, FaTrash, FaSolarPanel, 
-  FaCommentDots, FaChevronDown, FaExclamationTriangle 
+import { useAuth } from '../AuthProvider';
+import {
+  FaTimes, FaSave, FaBolt, FaHome, FaChargingStation,
+  FaCamera, FaUpload, FaPlus, FaTrash, FaSolarPanel,
+  FaCommentDots, FaChevronDown, FaExclamationTriangle
 } from 'react-icons/fa';
 
 export default function SiteSurveyModal({ dealId, isOpen, onClose, onSave }) {
+  const { employeeProfile } = useAuth();
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [systemType, setSystemType] = useState('Гібридна');
+  // id існуючого акта: якщо є — оновлюємо його, а не створюємо новий рядок
+  const [existingSurveyId, setExistingSurveyId] = useState(null);
+  const [wasComplete, setWasComplete] = useState(false);
   
   const [roofPlanes, setRoofPlanes] = useState([
     { roof_type: 'Скатний', roof_material: 'Металочерепиця', orientation: 'Південь', tilt_angle: '', width: '', length: '' }
@@ -32,7 +37,17 @@ export default function SiteSurveyModal({ dealId, isOpen, onClose, onSave }) {
   }, [isOpen]);
 
   const fetchSurvey = async () => {
-    const { data } = await supabase.from('site_surveys').select('*').eq('deal_id', dealId).single();
+    // Без .single(): якщо історично утворились дублікати — беремо найактуальніший
+    const { data: rows } = await supabase
+      .from('site_surveys')
+      .select('*')
+      .eq('deal_id', dealId)
+      .order('is_complete', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const data = rows?.[0];
+    setExistingSurveyId(data?.id || null);
+    setWasComplete(!!data?.is_complete);
     if (data) {
       setFormData({
         grid_phase: data.grid_phase || 3, grid_power_kw: data.grid_power_kw || '',
@@ -90,12 +105,14 @@ export default function SiteSurveyModal({ dealId, isOpen, onClose, onSave }) {
     setErrorMsg('');
 
     const totalSelectedFiles = Object.values(uploadFiles).flat().length;
-    
-    if (totalSelectedFiles === 0) {
+
+    // Фото обов'язкові лише при першому заповненні акта.
+    // При редагуванні вже завершеного акта фото давно завантажені.
+    if (totalSelectedFiles === 0 && !wasComplete) {
       setErrorMsg("Щоб завершити замір, обов'язково додайте хоча б одне фото об'єкта.");
       const formContainer = document.getElementById('surveyForm');
       if (formContainer) formContainer.scrollTo({ top: formContainer.scrollHeight, behavior: 'smooth' });
-      return; 
+      return;
     }
 
     setLoading(true);
@@ -114,20 +131,33 @@ export default function SiteSurveyModal({ dealId, isOpen, onClose, onSave }) {
       consumption_kw: formData.consumption_kw === '' ? null : parseFloat(formData.consumption_kw),
     };
 
-    const { error: dbError } = await supabase.from('site_surveys').upsert({
-      deal_id: dealId, ...sanitizedData, 
-      system_type: systemType, 
-      roof_planes: roofPlanes, 
-      roof_type: primaryRoofType, 
+    const surveyPayload = {
+      ...sanitizedData,
+      system_type: systemType,
+      roof_planes: roofPlanes,
+      roof_type: primaryRoofType,
       roof_material: primaryRoofMaterial,
       tilt_angle: primaryTilt, available_area: totalArea, orientation: allOrientations.substring(0, 255), is_complete: true
-    });
+    };
+
+    // ВАЖЛИВО: оновлюємо існуючий акт замість створення дубліката
+    const { error: dbError } = existingSurveyId
+      ? await supabase.from('site_surveys').update(surveyPayload).eq('id', existingSurveyId)
+      : await supabase.from('site_surveys').insert([{ deal_id: dealId, engineer_id: employeeProfile?.id || null, ...surveyPayload }]);
 
     if (dbError) {
       setErrorMsg("Помилка збереження в базу даних: " + dbError.message);
       setLoading(false);
       return;
     }
+
+    // Журнал подій: фіксуємо і первинне заповнення, і подальші зміни
+    await supabase.from('deal_activity_log').insert([{
+      deal_id: dealId,
+      user_id: employeeProfile?.id || null,
+      entity_type: 'site_survey',
+      action: wasComplete ? 'Внесено зміни в акт технічного заміру' : 'Заповнено акт технічного заміру'
+    }]);
 
     const baseUrl = 'https://docsuncorp.suncorplv.workers.dev';
     const uploadPromises = [];

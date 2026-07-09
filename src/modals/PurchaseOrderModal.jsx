@@ -396,10 +396,72 @@ export default function PurchaseOrderModal({ isOpen, onClose, poToEdit, onSaveSu
     finally { setIsReceiving(false); }
   };
 
+  // Масовий прийом: приймає всі непринйняті залишки по всіх позиціях замовлення
+  const handleReceiveAll = async () => {
+    const pendingItems = viewItems.filter(item => (item.quantity_ordered - item.quantity_received) > 0);
+    if (pendingItems.length === 0) return;
+    if (!window.confirm(`Прийняти всі позиції повністю (${pendingItems.length} поз.)?`)) return;
+
+    setIsReceiving(true);
+    try {
+      const userId = await getCurrentUserId();
+      for (const item of pendingItems) {
+        const remaining = item.quantity_ordered - item.quantity_received;
+        const { error } = await supabase.rpc('erp_receive_stock', {
+          p_product_id: item.product_id,
+          p_quantity: remaining,
+          p_to_location_id: poDetails.destination_location_id,
+          p_performed_by: userId,
+          p_purchase_order_item_id: item.id,
+          p_document_number: `PO-${poDetails.id.substring(0,6).toUpperCase()}`,
+          p_notes: 'Масовий прийом по замовленню'
+        });
+        if (error) throw new Error(`${item.products?.name}: ${error.message}`);
+      }
+      setReceivingItemId(null); setReceivingQty('');
+      await fetchViewData();
+      onSaveSuccess();
+    } catch (error) {
+      alert('Помилка масового прийому: ' + error.message);
+      await fetchViewData();
+    } finally {
+      setIsReceiving(false);
+    }
+  };
+
   const handleCancelOrder = async () => {
     if (!window.confirm('Ви впевнені, що хочете скасувати це замовлення?')) return;
-    await supabase.from('purchase_orders').update({ status: 'cancelled' }).eq('id', poToEdit.id);
-    onSaveSuccess(); onClose();
+    try {
+      // 1. Скасовуємо саме замовлення
+      const { error: poError } = await supabase.from('purchase_orders').update({ status: 'cancelled' }).eq('id', poToEdit.id);
+      if (poError) throw poError;
+
+      // 2. Знімаємо "В дорозі" зі специфікацій угод: скасовуємо відкриті алокації цього замовлення
+      const { data: allocations, error: allocFindError } = await supabase
+        .from('deal_bom_allocations')
+        .select('id, bom_id')
+        .eq('purchase_order_id', poToEdit.id)
+        .in('status', ['ordered', 'in_transit']);
+      if (allocFindError) throw allocFindError;
+
+      if (allocations && allocations.length > 0) {
+        const { error: allocUpdError } = await supabase
+          .from('deal_bom_allocations')
+          .update({ status: 'cancelled' })
+          .in('id', allocations.map(a => a.id));
+        if (allocUpdError) throw allocUpdError;
+
+        // 3. Перераховуємо статуси позицій специфікації — дефіцит знову стане видимим
+        const bomIds = [...new Set(allocations.map(a => a.bom_id).filter(Boolean))];
+        for (const bomId of bomIds) {
+          await supabase.rpc('erp_refresh_bom_status', { p_bom_id: bomId });
+        }
+      }
+
+      onSaveSuccess(); onClose();
+    } catch (error) {
+      alert('Помилка скасування замовлення: ' + error.message);
+    }
   };
 
   if (!isOpen) return null;
@@ -597,7 +659,18 @@ export default function PurchaseOrderModal({ isOpen, onClose, poToEdit, onSaveSu
 
             {/* СПЕЦИФІКАЦІЯ */}
             <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-              <h4 className="p-4 border-b border-slate-100 font-black text-sm uppercase tracking-widest text-slate-800 bg-slate-50/50 flex items-center gap-2"><FaBoxOpen className="text-amber-500"/> Специфікація та Прийом</h4>
+              <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3">
+                <h4 className="font-black text-sm uppercase tracking-widest text-slate-800 flex items-center gap-2"><FaBoxOpen className="text-amber-500"/> Специфікація та Прийом</h4>
+                {!isCancelled && viewItems.filter(i => (i.quantity_ordered - i.quantity_received) > 0).length > 1 && (
+                  <button
+                    onClick={handleReceiveAll}
+                    disabled={isReceiving}
+                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 shadow-sm active:scale-95"
+                  >
+                    <FaCheck size={10}/> {isReceiving ? 'Приймаємо...' : 'Прийняти все'}
+                  </button>
+                )}
+              </div>
               <table className="w-full text-left">
                 <thead className="bg-slate-50 text-[10px] uppercase font-black text-slate-400 tracking-widest border-b border-slate-200">
                   <tr><th className="p-4">Товар</th><th className="p-4 text-center">Замовлено</th><th className="p-4 text-center">Отримано</th><th className="p-4 text-right">Дії</th></tr>

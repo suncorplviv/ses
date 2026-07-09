@@ -56,14 +56,26 @@ export default function Inventory() {
         if (!error) setProducts(data || []);
         
       } else if (activeTab === 'stock') {
-        const { data, error } = await supabase
-          .from('v_stock_available')
-          .select('*')
-          .order('category_name')
-          .order('product_name')
-          .order('location_name');
-        if (!error) setStockAvailable(data || []);
-        
+        const [{ data, error }, { data: minStockRows }] = await Promise.all([
+          supabase
+            .from('v_stock_available')
+            .select('*')
+            .order('category_name')
+            .order('product_name')
+            .order('location_name'),
+          supabase.from('products').select('id, min_stock_quantity')
+        ]);
+
+        if (!error) {
+          const minStockByProduct = {};
+          (minStockRows || []).forEach(p => { minStockByProduct[p.id] = Number(p.min_stock_quantity || 0); });
+          const enriched = (data || []).map(row => ({
+            ...row,
+            min_stock_quantity: minStockByProduct[row.product_id] || 0
+          }));
+          setStockAvailable(enriched);
+        }
+
       } else if (activeTab === 'movements') {
         const { data, error } = await supabase
           .from('stock_movements')
@@ -72,6 +84,7 @@ export default function Inventory() {
             products(name, sku, unit),
             users(full_name),
             deals(custom_id),
+            sales(custom_id, clients(name)),
             from_location:stock_locations!stock_movements_from_location_id_fkey(name),
             to_location:stock_locations!stock_movements_to_location_id_fkey(name)
           `)

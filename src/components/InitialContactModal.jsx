@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../AuthProvider';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  FaTimes, FaPhoneVolume, FaMapMarkerAlt, FaHome, 
+import {
+  FaTimes, FaPhoneVolume, FaMapMarkerAlt, FaHome,
   FaBuilding, FaBullseye, FaSave, FaCity, FaMap,
-  FaBriefcase, FaTag
+  FaBriefcase, FaTag, FaSolarPanel, FaLeaf
 } from 'react-icons/fa';
 
 const REGIONS = [
@@ -44,9 +44,11 @@ export default function InitialContactModal({ dealId, isOpen, onClose, onSave })
     niche: '',
     region: '',
     city: '',
-    geolocation: '', 
+    geolocation: '',
     goal: 'Економія (Власне споживання)',
-    notes: '' 
+    systemType: 'Мережева',
+    isGreenTariff: false,
+    notes: ''
   });
 
   useEffect(() => {
@@ -55,23 +57,37 @@ export default function InitialContactModal({ dealId, isOpen, onClose, onSave })
     }
   }, [isOpen, dealId]);
 
+  // Чи були дані внесені раніше (для тексту в журналі подій)
+  const [hasExistingData, setHasExistingData] = useState(false);
+
   const fetchDealData = async () => {
     setLoading(true);
     try {
-      const { data: deal } = await supabase.from('deals').select('goal, notes, company_name, niche, clients(client_type)').eq('id', dealId).single();
-      const { data: survey } = await supabase.from('site_surveys').select('region, city, geolocation').eq('deal_id', dealId).single();
+      const { data: deal } = await supabase.from('deals').select('goal, notes, company_name, niche, is_green_tariff, clients(client_type)').eq('id', dealId).single();
+      // Без .single(): при дублікатах записів замірів запит не повинен падати
+      const { data: surveyRows } = await supabase
+        .from('site_surveys')
+        .select('region, city, geolocation, system_type')
+        .eq('deal_id', dealId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const survey = surveyRows?.[0];
+
+      setHasExistingData(!!(survey?.region || deal?.company_name || deal?.niche));
 
       if (deal) {
         setFormData(prev => ({
           ...prev,
           goal: deal.goal || 'Економія (Власне споживання)',
+          isGreenTariff: !!deal.is_green_tariff,
           objectType: deal.clients?.client_type === 'Юридична особа' ? "Комерційний об'єкт" : "Приватний будинок",
           companyName: deal.company_name || '',
           niche: deal.niche || '',
           notes: deal.notes || '',
           region: survey?.region || '',
           city: survey?.city || '',
-          geolocation: survey?.geolocation || ''
+          geolocation: survey?.geolocation || '',
+          systemType: survey?.system_type || 'Мережева'
         }));
       }
     } catch (error) {
@@ -93,9 +109,10 @@ export default function InitialContactModal({ dealId, isOpen, onClose, onSave })
     try {
       const isCommercial = formData.objectType === "Комерційний об'єкт";
       
-      const dealPayload = { 
+      const dealPayload = {
         goal: formData.goal,
         notes: formData.notes,
+        is_green_tariff: formData.isGreenTariff,
         company_name: isCommercial ? formData.companyName : null,
         niche: isCommercial ? formData.niche : null
       };
@@ -107,13 +124,20 @@ export default function InitialContactModal({ dealId, isOpen, onClose, onSave })
 
       if (dealError) throw dealError;
 
-      const { data: existingSurvey } = await supabase.from('site_surveys').select('id').eq('deal_id', dealId).single();
-      
+      // Без .single(): дублікати не повинні ламати перевірку існування
+      const { data: existingRows } = await supabase
+        .from('site_surveys')
+        .select('id')
+        .eq('deal_id', dealId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const existingSurvey = existingRows?.[0];
+
       const surveyPayload = {
         region: formData.region,
         city: formData.city,
         geolocation: formData.geolocation,
-        system_type: formData.goal.includes('Резерв') ? 'Гібридна' : 'Мережева'
+        system_type: formData.systemType
       };
 
       if (existingSurvey) {
@@ -122,10 +146,14 @@ export default function InitialContactModal({ dealId, isOpen, onClose, onSave })
         await supabase.from('site_surveys').insert([{ deal_id: dealId, ...surveyPayload }]);
       }
 
+      // Первинне заповнення чи редагування — різні записи в журналі подій
       await supabase.from('deal_activity_log').insert([{
         deal_id: dealId,
         user_id: employeeProfile?.id,
-        action: `Проведено кваліфікацію клієнта. ${formData.region}, ${formData.city}.`
+        entity_type: 'qualification',
+        action: hasExistingData
+          ? `Внесено зміни у кваліфікацію клієнта. ${formData.region}, ${formData.city}.`
+          : `Проведено кваліфікацію клієнта. ${formData.region}, ${formData.city}.`
       }]);
 
       if (onSave) onSave(); 
@@ -147,7 +175,6 @@ export default function InitialContactModal({ dealId, isOpen, onClose, onSave })
           animate={{ opacity: 1 }} 
           exit={{ opacity: 0 }} 
           className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
-          onClick={onClose}
         />
         
         <motion.div 
@@ -229,7 +256,7 @@ export default function InitialContactModal({ dealId, isOpen, onClose, onSave })
                   <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 flex items-center gap-1.5">
                     <FaMapMarkerAlt /> Область
                   </label>
-                  <select 
+                  <select
                     name="region" required
                     value={formData.region} onChange={handleChange}
                     className="w-full px-3.5 py-3 md:px-4 md:py-3.5 bg-white border border-slate-200 rounded-xl text-xs md:text-sm font-bold text-slate-900 outline-none focus:border-amber-500 transition-all shadow-sm cursor-pointer"
@@ -243,7 +270,7 @@ export default function InitialContactModal({ dealId, isOpen, onClose, onSave })
                   <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 flex items-center gap-1.5">
                     <FaCity /> Населений пункт
                   </label>
-                  <input 
+                  <input
                     type="text" name="city" required
                     value={formData.city} onChange={handleChange}
                     className="w-full px-3.5 py-3 md:px-4 md:py-3.5 bg-white border border-slate-200 rounded-xl text-xs md:text-sm font-bold text-slate-900 outline-none focus:border-amber-500 transition-all shadow-sm"
@@ -252,35 +279,69 @@ export default function InitialContactModal({ dealId, isOpen, onClose, onSave })
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-5">
-                <div>
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 flex items-center gap-1.5">
-                    <FaMap /> Геолокація (GPS)
-                  </label>
-                  <input 
-                    type="text" name="geolocation"
-                    value={formData.geolocation} onChange={handleChange}
-                    className="w-full px-3.5 py-3 md:px-4 md:py-3.5 bg-white border border-slate-200 rounded-xl text-xs md:text-sm font-bold text-slate-900 outline-none focus:border-amber-500 transition-all shadow-sm"
-                    placeholder="Координати або посилання..."
-                  />
+              <div>
+                <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 flex items-center gap-1.5">
+                  <FaMap /> Геолокація (GPS)
+                </label>
+                <input
+                  type="text" name="geolocation"
+                  value={formData.geolocation} onChange={handleChange}
+                  className="w-full px-3.5 py-3 md:px-4 md:py-3.5 bg-white border border-slate-200 rounded-xl text-xs md:text-sm font-bold text-slate-900 outline-none focus:border-amber-500 transition-all shadow-sm"
+                  placeholder="Координати або посилання..."
+                />
+              </div>
+
+              {/* Конфігурація станції — три пов'язані, але незалежні поля разом в одному візуальному блоці */}
+              <div className="bg-amber-50/40 border border-amber-100 rounded-2xl p-4 md:p-5 space-y-4">
+                <p className="text-[9px] md:text-[10px] font-black text-amber-700 uppercase tracking-widest flex items-center gap-1.5">
+                  <FaSolarPanel /> Конфігурація станції
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-5">
+                  <div>
+                    <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 flex items-center gap-1.5">
+                      <FaSolarPanel /> Тип станції
+                    </label>
+                    <select
+                      name="systemType" required
+                      value={formData.systemType} onChange={handleChange}
+                      className="w-full px-3.5 py-3 md:px-4 md:py-3.5 bg-white border border-slate-200 rounded-xl text-xs md:text-sm font-bold text-slate-900 outline-none focus:border-amber-500 cursor-pointer shadow-sm"
+                    >
+                      <option value="Автономна">Автономна</option>
+                      <option value="Гібридна">Гібридна</option>
+                      <option value="Мережева">Мережева</option>
+                    </select>
+                    <p className="text-[9px] text-slate-400 font-medium mt-1 ml-1">Незалежно від цілі клієнта.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 flex items-center gap-1.5">
+                      <FaBullseye /> Ціль клієнта
+                    </label>
+                    <select
+                      name="goal" required
+                      value={formData.goal} onChange={handleChange}
+                      className="w-full px-3.5 py-3 md:px-4 md:py-3.5 bg-white border border-slate-200 rounded-xl text-xs md:text-sm font-bold text-slate-900 outline-none focus:border-amber-500 cursor-pointer shadow-sm"
+                    >
+                      <option value="Економія (Власне споживання)">Економія (Власне споживання)</option>
+                      <option value="Резерв (Безперебійне живлення)">Резерв (Безперебійне живлення)</option>
+                      <option value="Продаж (Зелений тариф)">Продаж (Зелений тариф)</option>
+                      <option value="Економія + Продаж">Економія + Продаж</option>
+                      <option value="Резерв + Продаж">Резерв + Продаж</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 flex items-center gap-1.5">
-                    <FaBullseye /> Ціль клієнта
-                  </label>
-                  <select 
-                    name="goal" required
-                    value={formData.goal} onChange={handleChange}
-                    className="w-full px-3.5 py-3 md:px-4 md:py-3.5 bg-white border border-slate-200 rounded-xl text-xs md:text-sm font-bold text-slate-900 outline-none focus:border-amber-500 cursor-pointer shadow-sm"
-                  >
-                    <option value="Економія (Власне споживання)">Економія (Власне споживання)</option>
-                    <option value="Резерв (Безперебійне живлення)">Резерв (Безперебійне живлення)</option>
-                    <option value="Продаж (Зелений тариф)">Продаж (Зелений тариф)</option>
-                    <option value="Економія + Продаж">Економія + Продаж</option>
-                    <option value="Резерв + Продаж">Резерв + Продаж</option>
-                  </select>
-                </div>
+                <label className="flex items-center gap-3 cursor-pointer bg-white border border-slate-200 rounded-xl px-4 py-3.5 w-full shadow-sm hover:border-amber-300 transition-colors">
+                  <input
+                    type="checkbox" name="isGreenTariff"
+                    checked={formData.isGreenTariff}
+                    onChange={e => setFormData(prev => ({ ...prev, isGreenTariff: e.target.checked }))}
+                    className="w-4 h-4 text-amber-500 rounded border-slate-300 focus:ring-amber-500 cursor-pointer"
+                  />
+                  <FaLeaf className="text-emerald-500 shrink-0" size={14} />
+                  <span className="text-xs md:text-sm font-bold text-slate-800">Станція під зелений тариф</span>
+                </label>
               </div>
 
               <div>

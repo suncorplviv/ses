@@ -11,21 +11,35 @@ import {
   FaSync, FaMoneyBillWave
 } from 'react-icons/fa';
 
-import SiteSurveyViewer from '../components/SiteSurveyViewer'; 
+import SiteSurveyViewer from '../components/SiteSurveyViewer';
 import SiteSurveyModal from '../components/SiteSurveyModal';
 import InitialContactModal from '../components/InitialContactModal';
-import DocumentUploadModal from '../components/DocumentUploadModal'; 
-import DealSpecification from '../components/DealSpecification'; 
+import DocumentUploadModal from '../components/DocumentUploadModal';
+import DealSpecification from '../components/DealSpecification';
 import DealInstallation from '../components/DealInstallation';
-import DealAdditionalMaterials from '../components/DealAdditionalMaterials'; 
+import DealAdditionalMaterials from '../components/DealAdditionalMaterials';
 import DeliveryOrganizationModal from '../modals/DeliveryOrganizationModal';
-import DealPaymentsModal from '../components/DealPaymentsModal'; 
+import DealPaymentsModal from '../components/DealPaymentsModal';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 // Ключ localStorage для відновлення активного завдання між вкладками
 const STORAGE_KEY = 'myTasks_selectedTaskId';
 
+// ЄДИНІ НАБОРИ КАТЕГОРІЙ ДОКУМЕНТІВ — синхронізовані з DocumentUploadModal,
+// щоб завантажені файли завжди відображались у відповідних завданнях
+const TECH_DOC_CATEGORIES = ['Технічне креслення', '3D візуалізація', 'Схема підключення', 'Стрінгування', 'Схема'];
+const SURVEY_PHOTO_CATEGORIES = ['Щитова', 'Лічильник', 'Площини', 'Інвертор', 'Дах', 'Загальне фото'];
+const CP_CATEGORIES = ['Комерційна пропозиція (КП)', 'Рахунок', 'Рахунок-фактура'];
+const CLOSING_CATEGORIES = ['Договір', 'Акт виконаних робіт', 'Акт', 'Видаткова накладна', 'ТТН', 'Рахунок-фактура'];
+// Комерційні документи: бачить лише керівництво (КП, рахунки, договори, акти)
+const COMMERCIAL_CATEGORIES = [...new Set([...CP_CATEGORIES, ...CLOSING_CATEGORIES, 'Додаток до договору'])];
+
 export default function MyTasks() {
   const { employeeProfile } = useAuth();
+
+  // Рівень доступу: комерційні документи (КП, рахунки, договори) бачить лише керівництво
+  const roleLower = employeeProfile?.role?.toLowerCase() || '';
+  const canViewCommercial = roleLower.includes('директор') || roleLower.includes('засновник') || roleLower.includes('менеджер');
 
   // Список та фільтрація
   const [tasks, setTasks]               = useState([]);
@@ -85,7 +99,7 @@ export default function MyTasks() {
 
   const requiresFileUpload = selectedTask ? (
     selectedTask.title.match(techSolutionRegex) || selectedTask.title.match(cpRegex) ||
-    selectedTask.title.match(documentCloseRegex)
+    selectedTask.title.match(documentCloseRegex) || selectedTask.requires_file
   ) : false;
 
   // Вбудований SiteSurveyViewer для Тех.рішення та КП
@@ -104,19 +118,27 @@ export default function MyTasks() {
     if (employeeProfile?.id) fetchMyTasks(true);
   }, [employeeProfile]);
 
-  // При зміні вкладки — скидаємо вибране завдання якщо воно не належить до нової вкладки
+  // При зміні вкладки або статусу завдання — скидаємо вибране завдання,
+  // якщо воно більше не належить до поточної вкладки (щоб не "залипав" старий екран)
   useEffect(() => {
-    setIsInventoryOpen(false);
-    setIsSurveyViewerOpen(false);
-    setIsContextFilesOpen(false);
     if (selectedTask) {
       const isCompleted = selectedTask.status === 'Виконана';
       const belongsToTab = activeTab === 'completed' ? isCompleted : !isCompleted;
       if (!belongsToTab) {
         setSelectedTask(null);
+        setIsInventoryOpen(false);
+        setIsSurveyViewerOpen(false);
+        setIsContextFilesOpen(false);
         localStorage.removeItem(STORAGE_KEY);
       }
     }
+  }, [activeTab, selectedTask?.status]);
+
+  // Перемикання вкладки завжди згортає відкриті оверлеї
+  useEffect(() => {
+    setIsInventoryOpen(false);
+    setIsSurveyViewerOpen(false);
+    setIsContextFilesOpen(false);
   }, [activeTab]);
 
   // Синхронізація при поверненні на вкладку
@@ -144,7 +166,8 @@ export default function MyTasks() {
           *,
           deals(id, custom_id, title, stage, status, needs_battery, goal, company_name, niche, notes, final_budget, client_id),
           deal_stages(name),
-          task_templates(default_role)
+          task_templates(default_role),
+          assignee:users!tasks_assignee_id_fkey(full_name)
         `)
         .or(`assignee_id.eq.${employeeProfile.id},and(assignee_id.is.null,stage_id.not.is.null)`)
         .order('deadline_at', { ascending: true });
@@ -164,9 +187,14 @@ export default function MyTasks() {
         if (savedId) {
           const found = cleanTasks.find(t => t.id === savedId);
           if (found) {
+            // Синхронізуємо вкладку зі статусом відновленого завдання,
+            // щоб виконане завдання не "висіло" у вкладці "В роботі"
+            setActiveTab(found.status === 'Виконана' ? 'completed' : 'active');
             setSelectedTask(found);
-            setIsSurveyViewerOpen(false); 
+            setIsSurveyViewerOpen(false);
             fetchTaskData(found);
+          } else {
+            localStorage.removeItem(STORAGE_KEY);
           }
         }
       } else {
@@ -229,21 +257,31 @@ export default function MyTasks() {
       let currentTaskDocs = [];
       let contextDocs     = [];
 
-      if (task.title.match(techSolutionRegex)) {
-        currentTaskDocs = docs.filter(d => ['Технічне креслення', '3D візуалізація', 'Схема'].includes(d.category));
-        contextDocs     = docs.filter(d => ['Інвертор', 'Щитова', 'Дах', 'Загальне фото', 'Лічильник'].includes(d.category));
+      if (task.requires_file && task.file_label) {
+        // Власне завдання з вимогою документа: показуємо файли саме його типу
+        currentTaskDocs = docs.filter(d => d.category === task.file_label);
+      } else if (task.title.match(techSolutionRegex)) {
+        currentTaskDocs = docs.filter(d => TECH_DOC_CATEGORIES.includes(d.category));
+        // Контекст для проєктанта: фото з виїзного заміру (щитова, лічильник, площини, інвертор)
+        contextDocs     = docs.filter(d => SURVEY_PHOTO_CATEGORIES.includes(d.category));
       } else if (task.title.match(cpRegex)) {
-        currentTaskDocs = docs.filter(d => ['Комерційна пропозиція (КП)', 'Рахунок'].includes(d.category));
-        contextDocs     = docs.filter(d => ['Технічне креслення', '3D візуалізація', 'Схема'].includes(d.category));
+        currentTaskDocs = docs.filter(d => CP_CATEGORIES.includes(d.category));
+        contextDocs     = docs.filter(d => TECH_DOC_CATEGORIES.includes(d.category));
       } else if (task.title.match(documentCloseRegex)) {
-        currentTaskDocs = docs.filter(d => ['Договір', 'Акт', 'Видаткова накладна'].includes(d.category));
-        contextDocs     = docs.filter(d => ['Комерційна пропозиція (КП)', 'Рахунок'].includes(d.category));
+        currentTaskDocs = docs.filter(d => CLOSING_CATEGORIES.includes(d.category));
+        contextDocs     = docs.filter(d => CP_CATEGORIES.includes(d.category));
       } else if (task.title.match(installRegex)) {
-        contextDocs = docs.filter(d => ['Технічне креслення', 'Схема', '3D візуалізація'].includes(d.category));
+        contextDocs = docs.filter(d => TECH_DOC_CATEGORIES.includes(d.category));
       } else if (task.title.match(deliveryRegex)) {
         contextDocs = docs.filter(d => ['Комерційна пропозиція (КП)', 'Рахунок', 'Видаткова накладна'].includes(d.category));
       } else {
         contextDocs = docs.filter(d => d.category === 'Інше');
+      }
+
+      // Рівні доступу: комерційні документи з контексту попередніх етапів
+      // показуємо лише керівництву. Файли ВЛАСНОГО завдання виконавець бачить завжди.
+      if (!canViewCommercial) {
+        contextDocs = contextDocs.filter(d => !COMMERCIAL_CATEGORIES.includes(d.category));
       }
 
       setAttachments(currentTaskDocs);
@@ -321,10 +359,29 @@ export default function MyTasks() {
     setIsCommentAdding(false);
   };
 
-  const handleDeleteAttachment = async (id) => {
-    if (!window.confirm('Видалити файл?')) return;
-    await supabase.from('deal_documents').delete().eq('id', id);
-    fetchTaskData(selectedTask);
+  // Підтвердження видалення у стилі CRM (замість браузерного window.confirm)
+  const [confirmState, setConfirmState] = useState(null); // {type: 'attachment'|'comment', id, label}
+
+  const handleDeleteAttachment = (id, label) => {
+    setConfirmState({ type: 'attachment', id, label: label || 'файл' });
+  };
+
+  const handleDeleteComment = (comment) => {
+    setConfirmState({ type: 'comment', id: comment.id, label: comment.comment?.substring(0, 80) });
+  };
+
+  const executeConfirmedDelete = async () => {
+    if (!confirmState) return;
+    try {
+      if (confirmState.type === 'attachment') {
+        await supabase.from('deal_documents').delete().eq('id', confirmState.id);
+      } else if (confirmState.type === 'comment') {
+        await supabase.from('task_comments').delete().eq('id', confirmState.id);
+      }
+      await fetchTaskData(selectedTask);
+    } finally {
+      setConfirmState(null);
+    }
   };
 
   const handleDocumentUploadClick = (category) => {
@@ -380,7 +437,7 @@ export default function MyTasks() {
         </div>
       </a>
       {onDelete && (
-        <button type="button" onClick={() => onDelete(file.id)}
+        <button type="button" onClick={() => onDelete(file.id, file.file_name)}
           className="text-slate-300 hover:text-rose-500 p-2.5 opacity-0 group-hover:opacity-100 transition-all bg-slate-50 rounded-xl hover:bg-rose-50">
           <FaTrash size={14}/>
         </button>
@@ -452,9 +509,27 @@ export default function MyTasks() {
                         <span className="text-[10px] font-bold text-slate-500 truncate">{task.deals?.title}</span>
                       </div>
                       <h4 className={`text-sm font-bold leading-snug mb-3 ${isDone ? 'line-through text-slate-500' : 'text-slate-900'}`}>{task.title}</h4>
-                      <span className={`text-[9px] font-black uppercase px-2 py-1.5 rounded-md border flex items-center gap-1.5 w-max ${deadline.color}`}>
-                        <FaClock size={10}/> {deadline.text}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {isDone && task.completed_at ? (
+                          <span className="text-[9px] font-black uppercase px-2 py-1.5 rounded-md border flex items-center gap-1.5 w-max text-emerald-600 bg-emerald-50 border-emerald-100">
+                            <FaCheckCircle size={10}/> {new Date(task.completed_at).toLocaleString('uk-UA', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        ) : (
+                          <span className={`text-[9px] font-black uppercase px-2 py-1.5 rounded-md border flex items-center gap-1.5 w-max ${deadline.color}`}>
+                            <FaClock size={10}/> {deadline.text}
+                          </span>
+                        )}
+                        {isDone && task.assignee?.full_name && (
+                          <span className="text-[9px] font-black uppercase px-2 py-1.5 rounded-md border flex items-center gap-1.5 w-max text-slate-500 bg-slate-50 border-slate-200">
+                            <FaUserTie size={9}/> {task.assignee.full_name}
+                          </span>
+                        )}
+                        {task.requires_file && task.file_label && !isDone && (
+                          <span className="text-[9px] font-black uppercase px-2 py-1.5 rounded-md border flex items-center gap-1.5 w-max text-indigo-600 bg-indigo-50 border-indigo-100">
+                            <FaPaperclip size={9}/> {task.file_label}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -516,22 +591,21 @@ export default function MyTasks() {
                         <span className="px-3 py-1.5 bg-amber-100 text-amber-800 text-[10px] font-black uppercase tracking-widest rounded-lg border border-amber-200 shadow-sm">
                           Етап: {selectedTask.deal_stages?.name}
                         </span>
+                        {selectedTask.requires_file && selectedTask.file_label && (
+                          <span className="px-3 py-1.5 bg-indigo-100 text-indigo-700 text-[10px] font-black uppercase tracking-widest rounded-lg border border-indigo-200 shadow-sm">
+                            Документ: {selectedTask.file_label}
+                          </span>
+                        )}
                         <span className="text-xs font-bold text-slate-400">
                           СЕС №{selectedTask.deals?.custom_id} — {selectedTask.deals?.title}
                         </span>
                       </div>
                       <h2 className="text-2xl md:text-3xl font-black text-slate-900 leading-tight mb-4 tracking-tight">{selectedTask.title}</h2>
 
-                      {selectedTask.description && selectedTask.status !== 'Виконана' && (
-                        <div className="bg-slate-50 border-l-4 border-amber-500 p-5 rounded-r-2xl shadow-sm mt-4">
-                          <p className="text-sm text-slate-700 font-medium whitespace-pre-line leading-relaxed">{selectedTask.description}</p>
-                        </div>
-                      )}
                     </div>
 
-                    {/* АКОРДЕОН: ФАЙЛИ З ПОПЕРЕДНІХ ЕТАПІВ */}
+                    {/* АКОРДЕОН: ФАЙЛИ З ПОПЕРЕДНІХ ЕТАПІВ (для тех.рішення — фото з заміру) */}
                     {dealContextFiles.length > 0
-                      && !selectedTask.title.match(techSolutionRegex)
                       && !selectedTask.title.match(deliveryRegex)
                       && (
                       <div className="bg-amber-50/50 border border-amber-100 rounded-3xl shadow-sm overflow-hidden">
@@ -656,7 +730,7 @@ export default function MyTasks() {
                               <div className="flex justify-between items-center">
                                 <p className="text-[9px] font-black text-teal-600 uppercase tracking-widest">Історія транзакцій клієнта</p>
                                 <p className="text-[10px] font-black text-slate-700 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
-                                  Бюджет угоди: <span className="text-emerald-600 text-xs">${selectedTask.deals?.final_budget?.toLocaleString() || 0}</span>
+                                  Вартість угоди: <span className="text-emerald-600 text-xs">${selectedTask.deals?.final_budget?.toLocaleString() || 0}</span>
                                 </p>
                               </div>
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -903,7 +977,7 @@ export default function MyTasks() {
                               <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full text-[9px]">{attachments.length}</span>
                             )}
                           </h3>
-                          <button onClick={() => handleDocumentUploadClick('Інше')}
+                          <button onClick={() => handleDocumentUploadClick(selectedTask.file_label || 'Інше')}
                             className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors shadow-sm active:scale-95">
                             <FaPlus size={10}/> Завантажити
                           </button>
@@ -912,7 +986,11 @@ export default function MyTasks() {
                           <div className="p-8 text-center border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50/50">
                             <FaCloudUploadAlt className="text-slate-300 mx-auto mb-3" size={32}/>
                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Немає прикріплених файлів</p>
-                            {requiresFileUpload && <p className="text-[9px] font-bold text-rose-400 uppercase">Це завдання вимагає завантаження документів!</p>}
+                            {requiresFileUpload && (
+                              <p className="text-[9px] font-bold text-rose-400 uppercase">
+                                Це завдання вимагає завантаження документів{selectedTask.file_label ? `: "${selectedTask.file_label}"` : '!'}
+                              </p>
+                            )}
                           </div>
                         ) : (
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -930,15 +1008,22 @@ export default function MyTasks() {
                       {comments.length > 0 && (
                         <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar p-5 rounded-3xl bg-slate-50 border border-slate-100">
                           {comments.map(c => (
-                            <div key={c.id} className="bg-white p-5 rounded-2xl border border-slate-100 flex gap-4 shadow-sm animate-fade-in">
+                            <div key={c.id} className="bg-white p-5 rounded-2xl border border-slate-100 flex gap-4 shadow-sm animate-fade-in group/comment">
                               <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center shrink-0 mt-0.5 border border-slate-200"><FaUserTie className="text-slate-400" size={16}/></div>
-                              <div>
+                              <div className="flex-1 min-w-0">
                                 <div className="flex items-baseline gap-3 mb-1.5">
                                   <span className="text-sm font-black text-slate-800">{c.users?.full_name || 'Невідомий'}</span>
                                   <span className="text-[9px] font-bold text-slate-400 uppercase">{new Date(c.created_at).toLocaleString('uk-UA')}</span>
                                 </div>
-                                <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{c.comment}</p>
+                                <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed break-words">{c.comment}</p>
                               </div>
+                              {(c.user_id === employeeProfile?.id || canViewCommercial) && (
+                                <button onClick={() => handleDeleteComment(c)}
+                                  className="self-start p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg opacity-0 group-hover/comment:opacity-100 transition-all shrink-0"
+                                  title="Видалити нотатку">
+                                  <FaTrash size={12}/>
+                                </button>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -1019,6 +1104,7 @@ export default function MyTasks() {
       
       <DocumentUploadModal
         dealId={selectedTask?.deals?.id || selectedTask?.deal_id}
+        dealLabel={selectedTask?.deals?.title || `СЕС-${selectedTask?.deals?.custom_id || ''}`}
         taskId={selectedTask?.id}
         taskTitle={selectedTask?.title}
         category={uploadCategory}
@@ -1030,17 +1116,25 @@ export default function MyTasks() {
           if (requiresFileUpload && selectedTask?.status !== 'Виконана') handleCompleteTask(null, selectedTask);
         }}/>
         
-      <DealPaymentsModal 
-        dealId={selectedTask?.deals?.id || selectedTask?.deal_id} 
+      <DealPaymentsModal
+        dealId={selectedTask?.deals?.id || selectedTask?.deal_id}
         clientId={selectedTask?.deals?.client_id}
-        dealBudget={selectedTask?.deals?.final_budget} 
-        isOpen={isPaymentsModalOpen} 
-        onClose={() => { setIsPaymentsModalOpen(false); fetchTaskData(selectedTask); }} 
+        dealBudget={selectedTask?.deals?.final_budget}
+        isOpen={isPaymentsModalOpen}
+        onClose={() => { setIsPaymentsModalOpen(false); fetchTaskData(selectedTask); }}
         onSave={() => {
           setIsPaymentsModalOpen(false);
           fetchTaskData(selectedTask);
           if (selectedTask?.status !== 'Виконана') handleCompleteTask(null, selectedTask);
-        }} 
+        }}
+      />
+
+      <ConfirmDialog
+        isOpen={!!confirmState}
+        title={confirmState?.type === 'comment' ? 'Видалити нотатку?' : 'Видалити файл?'}
+        message={confirmState?.label ? `«${confirmState.label}»` : 'Дію неможливо буде скасувати.'}
+        onConfirm={executeConfirmedDelete}
+        onCancel={() => setConfirmState(null)}
       />
     </div>
   );

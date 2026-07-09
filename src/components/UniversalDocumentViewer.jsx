@@ -31,13 +31,13 @@ const getFileType = (fileName) => {
   return 'file';
 };
 
-export default function UniversalDocumentViewer({ dealId, title = "Документи та файли", isOpen, onClose }) {
+export default function UniversalDocumentViewer({ dealId, title = "Документи та файли", isOpen, onClose, initialCategories = [] }) {
   const [loading, setLoading] = useState(true);
-  
+
   const [documents, setDocuments] = useState([]);
   const [categories, setCategories] = useState([]);
   const [activeTab, setActiveTab] = useState('all');
-  const [lightboxIndex, setLightboxIndex] = useState(null); 
+  const [lightboxIndex, setLightboxIndex] = useState(null);
 
   useEffect(() => {
     if (isOpen && dealId) fetchData();
@@ -57,10 +57,14 @@ export default function UniversalDocumentViewer({ dealId, title = "Докуме�
         console.error("Помилка завантаження файлів:", error);
       } else if (docs) {
         setDocuments(docs);
-        
+
         // Динамічно формуємо унікальні категорії з наявних файлів
         const uniqueCategories = [...new Set(docs.map(d => d.category).filter(Boolean))];
         setCategories(uniqueCategories);
+
+        // Якщо викликано з конкретного завдання — одразу відкриваємо його категорію
+        const preferred = (initialCategories || []).find(c => uniqueCategories.includes(c));
+        setActiveTab(preferred || 'all');
       }
     } catch (error) {
       console.error("Помилка:", error);

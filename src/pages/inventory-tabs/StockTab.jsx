@@ -44,6 +44,7 @@ export default function StockTab({ stockAvailable, searchTerm, onOpenMovementMod
           unit: row.unit,
           category_name: row.category_name,
           product_type: row.product_type,
+          min_stock_quantity: Number(row.min_stock_quantity || 0),
           physical_stock: 0,
           reserved_stock: 0,
           available_stock: 0,
@@ -222,6 +223,7 @@ export default function StockTab({ stockAvailable, searchTerm, onOpenMovementMod
             {paginatedData.map((item) => {
               const isExpanded = !!expandedProducts[item.product_id];
               const hasNoFreeStock = item.available_stock <= 0;
+              const isBelowMinimum = item.min_stock_quantity > 0 && item.physical_stock < item.min_stock_quantity;
 
               return (
                 <React.Fragment key={item.product_id}>
@@ -231,6 +233,11 @@ export default function StockTab({ stockAvailable, searchTerm, onOpenMovementMod
                       <div className="text-[10px] font-mono text-slate-400">SKU: {item.sku || item.custom_id || '-'}</div>
                       {item.category_name && (
                         <div className="mt-1 text-[9px] font-black text-slate-400 uppercase">{item.category_name}</div>
+                      )}
+                      {isBelowMinimum && (
+                        <div className="mt-1.5 inline-flex items-center gap-1 text-[9px] font-black uppercase text-rose-600 bg-rose-50 border border-rose-100 px-1.5 py-0.5 rounded" title={`Мінімальний поріг: ${item.min_stock_quantity} ${item.unit}`}>
+                          Низький залишок
+                        </div>
                       )}
                     </td>
 

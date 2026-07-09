@@ -34,10 +34,11 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
   const [isAddNotesOpen, setIsAddNotesOpen] = useState(false);
   const [pendingBomItems, setPendingBomItems] = useState([]);
 
-  // СТЕЙТИ МОДАЛКИ: ПРЯМА ПОСТАВКА
+  // СТЕЙТИ МОДАЛКИ: ПРЯМА ПОСТАВКА (підтримує декілька позицій в одному замовленні)
   const [isDirectModalOpen, setIsDirectModalOpen] = useState(false);
-  const [directItem, setDirectItem] = useState(null);
-  const [directData, setDirectData] = useState({ supplier_id: '', quantity: '', notes: '' });
+  const [directItems, setDirectItems] = useState([]);
+  const [selectedBomIds, setSelectedBomIds] = useState([]);
+  const [directData, setDirectData] = useState({ supplier_id: '', notes: '' });
   const [isDirectSubmitting, setIsDirectSubmitting] = useState(false);
   const [suppliersList, setSuppliersList] = useState([]);
   const [supplierSearch, setSupplierSearch] = useState('');
@@ -108,6 +109,12 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
     });
 
     setBomItems(mappedData);
+
+    // Прибираємо з вибору позиції, які вже не мають дефіциту
+    setSelectedBomIds(prev => prev.filter(id => {
+      const item = mappedData.find(i => i.bom_id === id);
+      return item && (item.line_type || 'equipment') !== 'service' && Number(item.quantity_shortage || 0) > 0;
+    }));
 
     if (onProgressUpdate) {
       const totalPlanned = mappedData.length;
@@ -337,14 +344,40 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
     } catch (error) { alert('Помилка: ' + error.message); }
   };
 
-  const openDirectModal = async (item) => {
-    setDirectItem(item);
-    setDirectData({ supplier_id: '', quantity: item.quantity_shortage, notes: '' });
+  const openDirectModal = async (items) => {
+    const list = Array.isArray(items) ? items : [items];
+    setDirectItems(list.map(item => ({
+      bom_id: item.bom_id,
+      product_id: item.product_id,
+      product_name: item.product_name,
+      unit: item.unit,
+      quantity_shortage: Number(item.quantity_shortage || 0),
+      quantity: item.quantity_shortage
+    })));
+    setDirectData({ supplier_id: '', notes: '' });
     setSupplierSearch('');
     setIsDirectModalOpen(true);
-    
+
     const { data } = await supabase.from('suppliers').select('id, name').order('name');
     if (data) setSuppliersList(data);
+  };
+
+  const toggleBomSelection = (bomId) => {
+    setSelectedBomIds(prev => prev.includes(bomId) ? prev.filter(id => id !== bomId) : [...prev, bomId]);
+  };
+
+  const openDirectModalForSelected = () => {
+    const items = bomItems.filter(i => selectedBomIds.includes(i.bom_id));
+    if (items.length === 0) return;
+    openDirectModal(items);
+  };
+
+  const removeDirectItem = (bomId) => {
+    setDirectItems(prev => prev.filter(i => i.bom_id !== bomId));
+  };
+
+  const updateDirectItemQty = (bomId, qty) => {
+    setDirectItems(prev => prev.map(i => i.bom_id === bomId ? { ...i, quantity: qty } : i));
   };
 
   const handleCreateSupplier = async () => {
@@ -363,8 +396,11 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
   const submitDirectOrder = async (e) => {
     e.preventDefault();
     if (!directData.supplier_id) return alert('Оберіть постачальника!');
-    const qty = parseFloat(directData.quantity);
-    if (qty <= 0) return alert('Кількість має бути більшою за нуль!');
+    if (directItems.length === 0) return alert('Список позицій порожній!');
+
+    const preparedItems = directItems.map(item => ({ ...item, qty: parseFloat(item.quantity) }));
+    const badItem = preparedItems.find(item => !(item.qty > 0));
+    if (badItem) return alert(`Вкажіть коректну кількість для "${badItem.product_name}"!`);
 
     setIsDirectSubmitting(true);
     try {
@@ -372,6 +408,7 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
       const { data: locId, error: locErr } = await supabase.rpc('erp_ensure_deal_location', { p_deal_id: dealId });
       if (locErr) throw locErr;
 
+      // Одне замовлення постачальнику на всі вибрані позиції
       const { data: po, error: poErr } = await supabase.from('purchase_orders').insert([{
         supplier_id: directData.supplier_id,
         delivery_type: 'direct_to_site',
@@ -381,31 +418,43 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
       }]).select().single();
       if (poErr) throw poErr;
 
-      const { data: poItem, error: poiErr } = await supabase.from('purchase_order_items').insert([{
-        order_id: po.id,
-        product_id: directItem.product_id,
-        quantity_ordered: qty,
-        quantity_received: 0
-      }]).select().single();
+      const { data: poItems, error: poiErr } = await supabase.from('purchase_order_items').insert(
+        preparedItems.map(item => ({
+          order_id: po.id,
+          product_id: item.product_id,
+          quantity_ordered: item.qty,
+          quantity_received: 0
+        }))
+      ).select();
       if (poiErr) throw poiErr;
 
-      const { error: allocErr } = await supabase.from('deal_bom_allocations').insert([{
-        bom_id: directItem.bom_id,
-        source_type: 'purchase_order',
-        location_id: locId,
-        purchase_order_id: po.id,
-        purchase_order_item_id: poItem.id,
-        quantity: qty,
-        status: 'ordered',
-        created_by: userId
-      }]);
+      const poItemByProduct = {};
+      (poItems || []).forEach(pi => { poItemByProduct[pi.product_id] = pi.id; });
+
+      const { error: allocErr } = await supabase.from('deal_bom_allocations').insert(
+        preparedItems.map(item => ({
+          bom_id: item.bom_id,
+          source_type: 'purchase_order',
+          location_id: locId,
+          purchase_order_id: po.id,
+          purchase_order_item_id: poItemByProduct[item.product_id] || null,
+          quantity: item.qty,
+          status: 'ordered',
+          created_by: userId
+        }))
+      );
       if (allocErr) throw allocErr;
 
-      await supabase.rpc('erp_refresh_bom_status', { p_bom_id: directItem.bom_id });
-      await supabase.from('deal_activity_log').insert([{ deal_id: dealId, user_id: userId, action: `Оформлено пряму поставку: ${directItem.product_name} (${qty})` }]);
+      for (const item of preparedItems) {
+        await supabase.rpc('erp_refresh_bom_status', { p_bom_id: item.bom_id });
+      }
+
+      const summary = preparedItems.map(i => `${i.product_name} (${i.qty})`).join(', ');
+      await supabase.from('deal_activity_log').insert([{ deal_id: dealId, user_id: userId, action: `Оформлено пряму поставку (${preparedItems.length} поз.): ${summary}` }]);
 
       setIsDirectModalOpen(false);
-      setDirectItem(null);
+      setDirectItems([]);
+      setSelectedBomIds([]);
       fetchBom();
     } catch (err) {
       alert('Помилка оформлення прямої поставки: ' + err.message);
@@ -437,6 +486,14 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
         </h2>
 
         <div className="flex items-center gap-3">
+          {selectedBomIds.length > 0 && (
+            <button
+              onClick={openDirectModalForSelected}
+              className="bg-amber-400 hover:bg-amber-500 text-slate-900 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex justify-center items-center gap-2 transition-all shadow-md shadow-amber-400/30 active:scale-95 whitespace-nowrap"
+            >
+              <FaTruckLoading size={12}/> Замовити вибрані ({selectedBomIds.length})
+            </button>
+          )}
           {isAllCovered && onCompleteTask && (
             <button 
               onClick={onCompleteTask} 
@@ -460,6 +517,20 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
             <table className="w-full text-left border-collapse table-auto">
               <thead className="bg-slate-50">
                 <tr className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">
+                  <th className="py-4 pl-4 pr-1 w-8" title="Вибрати позиції з дефіцитом для спільного замовлення">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 accent-amber-500 cursor-pointer align-middle"
+                      checked={(() => {
+                        const orderable = bomItems.filter(i => (i.line_type || 'equipment') !== 'service' && Number(i.quantity_shortage || 0) > 0);
+                        return orderable.length > 0 && orderable.every(i => selectedBomIds.includes(i.bom_id));
+                      })()}
+                      onChange={(e) => {
+                        const orderable = bomItems.filter(i => (i.line_type || 'equipment') !== 'service' && Number(i.quantity_shortage || 0) > 0);
+                        setSelectedBomIds(e.target.checked ? orderable.map(i => i.bom_id) : []);
+                      }}
+                    />
+                  </th>
                   <th className="py-4 px-4 w-4/12">Позиція</th>
                   <th className="py-4 px-2 text-center w-1/12">Потреба</th>
                   <th className="py-4 px-2 text-center w-2/12">Ціна (USD) / Сума</th>
@@ -469,7 +540,7 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {bomItems.length === 0 ? (
-                  <tr><td colSpan="5" className="py-16 text-center text-slate-400 font-bold bg-white">Специфікація порожня</td></tr>
+                  <tr><td colSpan="6" className="py-16 text-center text-slate-400 font-bold bg-white">Специфікація порожня</td></tr>
                 ) : (
                   bomItems.map((item) => {
                     const quantityPlanned = Number(item.quantity_planned || 0);
@@ -489,8 +560,20 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
                     const canReserve = !isService && quantityShortage > 0 && availableQty > 0;
                     const hasOpenReserve = quantityReserved > 0;
 
+                    const canOrder = !isService && quantityShortage > 0;
+
                     return (
-                      <tr key={item.bom_id} className="hover:bg-slate-50/50 transition-colors bg-white">
+                      <tr key={item.bom_id} className={`transition-colors ${selectedBomIds.includes(item.bom_id) ? 'bg-amber-50/60' : 'bg-white hover:bg-slate-50/50'}`}>
+                        <td className="py-4 pl-4 pr-1">
+                          {canOrder && (
+                            <input
+                              type="checkbox"
+                              className="w-4 h-4 accent-amber-500 cursor-pointer align-middle"
+                              checked={selectedBomIds.includes(item.bom_id)}
+                              onChange={() => toggleBomSelection(item.bom_id)}
+                            />
+                          )}
+                        </td>
                         <td className="py-4 px-4">
                           <p className="font-bold text-sm text-slate-800 leading-tight">{item.product_name}</p>
                           <div className="flex items-center gap-2 mt-1">
@@ -918,13 +1001,15 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
         </div>
       )}
 
-      {isDirectModalOpen && directItem && (
+      {isDirectModalOpen && directItems.length > 0 && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in custom-scrollbar overflow-y-auto">
-          <form onSubmit={submitDirectOrder} className="bg-white rounded-3xl shadow-2xl w-full max-w-md flex flex-col overflow-visible relative">
+          <form onSubmit={submitDirectOrder} className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col overflow-visible relative my-auto">
             <div className="p-6 border-b border-slate-100 bg-slate-900 text-white flex justify-between items-center rounded-t-3xl shrink-0">
               <div>
                 <h3 className="text-sm font-black uppercase tracking-widest flex items-center gap-2"><FaTruckLoading className="text-amber-400"/> Пряма поставка</h3>
-                <p className="text-[10px] font-medium mt-1 text-slate-400 line-clamp-1">{directItem.product_name}</p>
+                <p className="text-[10px] font-medium mt-1 text-slate-400 line-clamp-1">
+                  {directItems.length === 1 ? directItems[0].product_name : `Одне замовлення на ${directItems.length} позицій`}
+                </p>
               </div>
               <button type="button" onClick={() => setIsDirectModalOpen(false)} className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"><FaTimes size={16}/></button>
             </div>
@@ -961,18 +1046,33 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
               </div>
 
               <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">Кількість до замовлення *</label>
-                <div className="flex items-center gap-3">
-                  <input 
-                    type="number" step="any" min="0.1" required
-                    value={directData.quantity} onChange={(e) => setDirectData({...directData, quantity: e.target.value})}
-                    className="w-full text-xl font-black p-3 bg-white border border-slate-200 rounded-xl outline-none focus:border-amber-500"
-                  />
-                  <span className="text-sm font-black text-slate-500 uppercase">{directItem.unit}</span>
+                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">
+                  Позиції замовлення ({directItems.length})
+                </label>
+                <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-1">
+                  {directItems.map(item => (
+                    <div key={item.bom_id} className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-slate-800 truncate">{item.product_name}</p>
+                        <p className="text-[10px] font-bold text-slate-400 mt-0.5">Дефіцит: {item.quantity_shortage} {item.unit}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <input
+                          type="number" step="any" min="0.1" required
+                          value={item.quantity}
+                          onChange={(e) => updateDirectItemQty(item.bom_id, e.target.value)}
+                          className="w-20 text-sm font-black p-2 bg-slate-50 border border-slate-200 rounded-lg text-center outline-none focus:border-amber-500"
+                        />
+                        <span className="text-[10px] font-black text-slate-400 uppercase w-8">{item.unit}</span>
+                        {directItems.length > 1 && (
+                          <button type="button" onClick={() => removeDirectItem(item.bom_id)} className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors">
+                            <FaTimes size={12}/>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <p className="text-[10px] font-bold text-slate-400 mt-2 ml-1">
-                  Поточний дефіцит на об'єкті: {directItem.quantity_shortage} {directItem.unit}
-                </p>
               </div>
 
               <div className="pt-2 border-t border-slate-100">
@@ -990,7 +1090,7 @@ export default function DealSpecification({ dealId, onProgressUpdate, onBack, on
             <div className="p-4 border-t border-slate-100 flex gap-3 bg-white rounded-b-3xl shrink-0">
                <button type="button" onClick={() => setIsDirectModalOpen(false)} className="flex-1 py-3.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors">Скасувати</button>
                <button type="submit" disabled={isDirectSubmitting} className="flex-1 py-3.5 text-xs font-black text-white bg-slate-900 hover:bg-slate-800 uppercase tracking-widest rounded-xl transition-colors shadow-lg shadow-slate-900/20">
-                 {isDirectSubmitting ? 'ОФОРМЛЕННЯ...' : 'ЗАМОВИТИ'}
+                 {isDirectSubmitting ? 'ОФОРМЛЕННЯ...' : `ЗАМОВИТИ${directItems.length > 1 ? ` (${directItems.length} поз.)` : ''}`}
                </button>
             </div>
           </form>

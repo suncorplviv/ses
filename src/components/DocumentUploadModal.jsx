@@ -2,19 +2,26 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../AuthProvider';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  FaTimes, FaFileContract, FaSave, FaCloudUploadAlt, FaTrash, FaFileAlt, FaCheckCircle 
+import {
+  FaTimes, FaFileContract, FaSave, FaCloudUploadAlt, FaTrash, FaFileAlt, FaCheckCircle, FaPlus
 } from 'react-icons/fa';
 
-export default function DocumentUploadModal({ dealId, taskId, taskTitle, category, isOpen, onClose, onSave }) {
+export default function DocumentUploadModal({ dealId, dealLabel, taskId, taskTitle, category, isOpen, onClose, onSave }) {
   const { employeeProfile } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Стан для зберігання файлів по категоріях: { 'Назва категорії': [File, File] }
   const [filesByCategory, setFilesByCategory] = useState({});
 
+  // Власні (введені вручну) типи документів
+  const [customCategories, setCustomCategories] = useState([]);
+  const [newCategoryName, setNewCategoryName] = useState('');
+
+  // Кількість вже завантажених файлів по категоріях (для порядкового номера в імені)
+  const [existingCounts, setExistingCounts] = useState({});
+
   // Визначення доступних категорій на основі назви завдання
-  const availableCategories = useMemo(() => {
+  const baseCategories = useMemo(() => {
     if (category && category !== 'Інше' && category !== 'Інший документ') {
       return [category];
     }
@@ -53,22 +60,62 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
       'Технічне рішення / Схема',
       'Договір',
       'Рахунок-фактура',
-      'Видаткова накладна / Акт',
-      'Інший документ'
+      'Видаткова накладна / Акт'
     ];
   }, [taskTitle, category]);
 
-  // Очищення стану при закритті/відкритті
+  // Базові категорії + власноруч додані типи
+  const availableCategories = useMemo(() => {
+    return [...baseCategories, ...customCategories.filter(c => !baseCategories.includes(c))];
+  }, [baseCategories, customCategories]);
+
+  // Очищення стану при відкритті + підрахунок вже завантажених файлів для нумерації
   useEffect(() => {
     if (isOpen) {
       setFilesByCategory({});
-    }
-  }, [isOpen]);
+      setCustomCategories([]);
+      setNewCategoryName('');
+      setExistingCounts({});
 
-  // Функція для очищення та формування стандартизованого імені файлу
-  const getStandardizedName = (catName, originalName) => {
-    const cleanCat = catName.replace(/[\/\\?%*:|"<>\s]/g, '-');
-    return `${cleanCat}_Угода_${dealId}_${originalName}`;
+      if (dealId) {
+        supabase
+          .from('deal_documents')
+          .select('category')
+          .eq('deal_id', dealId)
+          .then(({ data }) => {
+            const counts = {};
+            (data || []).forEach(d => {
+              if (d.category) counts[d.category] = (counts[d.category] || 0) + 1;
+            });
+            setExistingCounts(counts);
+          });
+      }
+    }
+  }, [isOpen, dealId]);
+
+  const handleAddCustomCategory = () => {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    if (availableCategories.includes(name)) {
+      setNewCategoryName('');
+      return;
+    }
+    setCustomCategories(prev => [...prev, name]);
+    setNewCategoryName('');
+  };
+
+  const cleanForFileName = (str) =>
+    (str || '').replace(/[\/\\?%*:|"<>]/g, '-').replace(/\s+/g, ' ').trim();
+
+  // Шаблон імені: {Тип документа}_{Назва угоди}_{Дата}_{Порядковий №}.{розширення}
+  const getStandardizedName = (catName, file, indexInCategory) => {
+    const cleanCat = cleanForFileName(catName);
+    const cleanDeal = cleanForFileName(dealLabel) || `Угода-${String(dealId).substring(0, 6)}`;
+    const dateStr = new Date().toLocaleDateString('uk-UA');
+    const seq = (existingCounts[catName] || 0) + indexInCategory + 1;
+    const originalName = file.name || '';
+    const ext = originalName.includes('.') ? '.' + originalName.split('.').pop() : '';
+    return `${cleanCat}_${cleanDeal}_${dateStr}_${String(seq).padStart(2, '0')}${ext}`;
   };
 
   const handleFileChange = (catName, e) => {
@@ -124,9 +171,9 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
         uploadData.append('deal_id', dealId);
         uploadData.append('category', catName); 
         
-        files.forEach(file => {
-          // Застосовуємо розпізнане та стандартизоване ім'я файлу для завантаження
-          const finalName = getStandardizedName(catName, file.name);
+        files.forEach((file, idx) => {
+          // Застосовуємо стандартизоване ім'я: Тип_Угода_Дата_№
+          const finalName = getStandardizedName(catName, file, idx);
           uploadData.append('files', file, finalName);
         });
 
@@ -173,7 +220,6 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
           animate={{ opacity: 1 }} 
           exit={{ opacity: 0 }} 
           className="absolute inset-0 bg-slate-900/70 backdrop-blur-md"
-          onClick={onClose}
         />
         
         <motion.div 
@@ -205,8 +251,33 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
                 Необхідні документи
               </h4>
               <p className="text-xs text-slate-500">
-                Завантажте файли у відповідні блоки нижче. Назви будуть стандартизовані автоматично.
+                Завантажте файли у відповідні блоки нижче. Назви стандартизуються автоматично: <span className="font-bold text-slate-600">Тип_Угода_Дата_№</span>
               </p>
+            </div>
+
+            {/* ВЛАСНИЙ ТИП ДОКУМЕНТА */}
+            <div className="mb-5 p-4 bg-white border border-slate-200 rounded-2xl">
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                Потрібен інший тип документа? Створіть власний
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCustomCategory(); } }}
+                  placeholder="Напр: Технічні умови, Дозвіл, Протокол..."
+                  className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-amber-500 transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddCustomCategory}
+                  disabled={!newCategoryName.trim()}
+                  className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-2 whitespace-nowrap"
+                >
+                  <FaPlus size={10}/> Додати блок
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -247,7 +318,7 @@ export default function DocumentUploadModal({ dealId, taskId, taskTitle, categor
                     {hasFiles && (
                       <div className="space-y-2 mt-auto">
                         {categoryFiles.map((file, idx) => {
-                          const systemName = getStandardizedName(cat, file.name);
+                          const systemName = getStandardizedName(cat, file, idx);
                           return (
                             <div key={idx} className="flex flex-col p-2.5 bg-white border border-emerald-100 rounded-xl shadow-sm space-y-1">
                               <div className="flex items-center justify-between">

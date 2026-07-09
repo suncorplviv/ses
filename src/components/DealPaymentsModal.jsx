@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../AuthProvider';
-import { 
-  FaMoneyBillWave, FaTimes, FaPlus, FaCheckCircle, 
+import { toLocalDateTimeInputValue } from '../utils/dateTime';
+import {
+  FaMoneyBillWave, FaTimes, FaPlus, FaCheckCircle,
   FaWallet, FaCalendarAlt, FaCoins, FaHandHoldingUsd,
   FaExclamationCircle, FaTrash
 } from 'react-icons/fa';
@@ -21,7 +22,7 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
     exchange_rate: '43.5', 
     payment_method: 'Готівка',
     payment_category: 'Аванс',
-    payment_date: new Date().toISOString().slice(0, 16),
+    payment_date: toLocalDateTimeInputValue(),
     notes: ''
   });
 
@@ -38,7 +39,7 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
         ...prev, 
         amount_usd: '', 
         notes: '',
-        payment_date: new Date().toISOString().slice(0, 16)
+        payment_date: toLocalDateTimeInputValue()
       }));
     }
   }, [isOpen, dealId]);
@@ -103,7 +104,7 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
         ...prev, 
         amount_usd: '', 
         notes: '',
-        payment_date: new Date().toISOString().slice(0, 16)
+        payment_date: toLocalDateTimeInputValue()
       }));
       
       await fetchDealPayments();
@@ -179,7 +180,7 @@ export default function DealPaymentsModal({ dealId, clientId, dealBudget, isOpen
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
               <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-                <FaCoins /> Бюджет угоди
+                <FaCoins /> Вартість угоди
               </div>
               <div className="text-xl font-black text-slate-800">
                 {currentBudget.toLocaleString()} $

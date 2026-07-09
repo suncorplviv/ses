@@ -2,10 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  FaPlus, FaSearch, FaTrash, FaSolarPanel, FaUserTie, FaTimes, 
-  FaExclamationTriangle, FaBuilding, FaUser, FaChevronLeft, 
-  FaChevronRight, FaCheckDouble, FaEdit, FaFilter 
+import {
+  FaPlus, FaSearch, FaTrash, FaSolarPanel, FaUserTie, FaTimes,
+  FaExclamationTriangle, FaBuilding, FaUser, FaChevronLeft,
+  FaChevronRight, FaCheckDouble, FaEdit, FaFilter, FaMapMarkerAlt, FaBolt
 } from 'react-icons/fa';
 
 export default function Deals() {
@@ -68,7 +68,7 @@ export default function Deals() {
         .select(`
           *, 
           clients(name, phone, client_type, company_name),
-          site_surveys(system_type),
+          site_surveys(system_type, grid_power_kw, region, city),
           tasks(id, status, stage_id)
         `)
         .order('updated_at', { ascending: false });
@@ -315,7 +315,10 @@ export default function Deals() {
                   <div className="flex-1 p-2 md:p-3 overflow-y-auto space-y-2 md:space-y-3 pr-1 md:pr-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
                     <AnimatePresence>
                       {stageDeals.map(deal => {
-                        const sysType = Array.isArray(deal.site_surveys) ? deal.site_surveys[0]?.system_type : deal.site_surveys?.system_type;
+                        const survey = Array.isArray(deal.site_surveys) ? deal.site_surveys[0] : deal.site_surveys;
+                        const sysType = survey?.system_type;
+                        const powerKw = survey?.grid_power_kw;
+                        const location = [survey?.region, survey?.city].filter(Boolean).join(', ');
                         const isBusiness = deal.clients?.client_type === 'Юридична особа';
                         const isFirstStage = stages.findIndex(s => s.id === deal.stage_id) === 0;
                         const isLastStage = stages.findIndex(s => s.id === deal.stage_id) === stages.length - 1;
@@ -380,7 +383,9 @@ export default function Deals() {
                             <div className="space-y-1.5">
                                <div className="flex justify-between items-center"><span className="text-[8px] font-black uppercase text-slate-400">Ціль:</span><span className="text-[9px] md:text-[10px] font-bold text-slate-700 truncate max-w-[120px] text-right">{deal.goal}</span></div>
                                {sysType && <div className="flex justify-between items-center"><span className="text-[8px] font-black uppercase text-slate-400">Тип:</span><span className="text-[9px] md:text-[10px] font-black text-amber-600 bg-amber-50 px-1.5 md:px-2 py-0.5 rounded">{sysType}</span></div>}
-                               <div className="flex justify-between items-center"><span className="text-[8px] font-black uppercase text-slate-400">Бюджет:</span><span className="text-[10px] md:text-[11px] font-black text-emerald-600">{Number(deal.final_budget).toLocaleString()} $</span></div>
+                               {powerKw && <div className="flex justify-between items-center"><span className="text-[8px] font-black uppercase text-slate-400 flex items-center gap-1"><FaBolt size={8}/> Потужність:</span><span className="text-[9px] md:text-[10px] font-black text-sky-600 bg-sky-50 px-1.5 md:px-2 py-0.5 rounded">{powerKw} кВт</span></div>}
+                               {location && <div className="flex justify-between items-center gap-2"><span className="text-[8px] font-black uppercase text-slate-400 flex items-center gap-1 shrink-0"><FaMapMarkerAlt size={8}/> Локація:</span><span className="text-[9px] md:text-[10px] font-bold text-slate-600 truncate max-w-[130px] text-right">{location}</span></div>}
+                               <div className="flex justify-between items-center"><span className="text-[8px] font-black uppercase text-slate-400">Вартість:</span><span className="text-[10px] md:text-[11px] font-black text-emerald-600">{Number(deal.final_budget).toLocaleString()} $</span></div>
                             </div>
 
                             {/* ПРОГРЕС ЗАВДАНЬ */}
@@ -464,7 +469,7 @@ export default function Deals() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase mb-1.5 ml-1">Бюджет ($)</label>
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase mb-1.5 ml-1">Вартість ($)</label>
                   <input type="number" className="w-full px-3 py-2.5 md:py-3 bg-white border border-slate-200 rounded-lg md:rounded-xl text-xs md:text-sm font-bold outline-none focus:border-amber-500" value={editData.final_budget} onChange={e => setEditData({...editData, final_budget: e.target.value})}/>
                 </div>
               </div>
@@ -589,7 +594,7 @@ export default function Deals() {
                 <div><label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase mb-1.5 ml-1">Назва об'єкту / Угоди *</label><input type="text" required placeholder="Напр: СЕС 15кВт Київ" className="w-full px-3 py-2.5 md:py-3 bg-slate-50 border border-slate-200 rounded-lg md:rounded-xl text-xs md:text-sm font-bold outline-none focus:border-amber-500" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})}/></div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-5 pt-1 md:pt-2">
                   <div><label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase mb-1.5 ml-1">Ціль клієнта</label><select className="w-full px-3 py-2.5 md:py-3 bg-slate-50 border border-slate-200 rounded-lg md:rounded-xl text-xs md:text-sm font-bold outline-none focus:border-amber-500" value={formData.goal} onChange={e => setFormData({...formData, goal: e.target.value})}><option value="Економія (Власне споживання)">Економія (Власне споживання)</option><option value="Резерв (Безперебійне живлення)">Резерв (Безперебійне живлення)</option><option value="Продаж (Зелений тариф)">Продаж (Зелений тариф)</option></select></div>
-                  <div><label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase mb-1.5 ml-1">Бюджет ($)</label><input type="number" placeholder="Напр: 15000" className="w-full px-3 py-2.5 md:py-3 bg-slate-50 border border-slate-200 rounded-lg md:rounded-xl text-xs md:text-sm font-bold outline-none focus:border-amber-500" value={formData.final_budget} onChange={e => setFormData({...formData, final_budget: e.target.value})}/></div>
+                  <div><label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase mb-1.5 ml-1">Вартість ($)</label><input type="number" placeholder="Напр: 15000" className="w-full px-3 py-2.5 md:py-3 bg-slate-50 border border-slate-200 rounded-lg md:rounded-xl text-xs md:text-sm font-bold outline-none focus:border-amber-500" value={formData.final_budget} onChange={e => setFormData({...formData, final_budget: e.target.value})}/></div>
                   <div className="md:col-span-2 pt-1 md:pt-2"><label className="flex items-center gap-2 md:gap-3 cursor-pointer p-3 md:p-4 bg-amber-50 border border-amber-200 rounded-lg md:rounded-xl transition-colors"><input type="checkbox" checked={formData.needs_battery} onChange={e => setFormData({...formData, needs_battery: e.target.checked})} className="w-4 h-4 md:w-5 md:h-5 text-amber-600 rounded focus:ring-amber-500"/><span className="text-[10px] md:text-xs font-black uppercase text-amber-800 tracking-widest">Потрібен акумулятор (АКБ)</span></label></div>
                 </div>
               </div>

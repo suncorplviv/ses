@@ -396,16 +396,24 @@ export default function DealDetails() {
       />
       
       {isDocModalOpen && (
-        <DocumentUploadModal 
-          dealId={id} 
-          taskId={docTask?.id} 
+        <DocumentUploadModal
+          dealId={id}
+          dealLabel={deal?.title || `СЕС-${deal?.custom_id || ''}`}
+          taskId={docTask?.id}
           taskTitle={docTask?.title}
-          isOpen={isDocModalOpen} 
-          onClose={() => setIsDocModalOpen(false)} 
+          category={docTask?.file_label || undefined}
+          isOpen={isDocModalOpen}
+          onClose={() => setIsDocModalOpen(false)}
           onSave={() => {
             setIsDocModalOpen(false);
-            completeTaskAndCheckStage(docTask);
-          }} 
+            // Дозавантаження файлів у вже виконане завдання не "виконує" його повторно
+            if (docTask && docTask.status !== 'Виконана') {
+              completeTaskAndCheckStage(docTask);
+            } else {
+              setTaskRefreshTrigger(prev => prev + 1);
+              fetchDealFullData();
+            }
+          }}
         />
       )}
 

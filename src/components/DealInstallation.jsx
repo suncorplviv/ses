@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../AuthProvider';
-import { 
-  FaCheck, FaTimes, FaTools, 
+import {
+  FaCheck, FaTimes, FaTools,
   FaClipboardCheck, FaHardHat, FaChevronDown, FaChevronUp, FaCommentDots,
-  FaArrowLeft, FaConciergeBell, FaCheckCircle, FaTruckLoading, FaSpinner, FaBoxOpen
+  FaArrowLeft, FaConciergeBell, FaCheckCircle, FaTruckLoading, FaSpinner, FaBoxOpen,
+  FaCalendarAlt, FaTrash, FaPlus, FaWifi, FaSave, FaEdit
 } from 'react-icons/fa';
 
 export default function DealInstallation({ dealId, onProgressUpdate, onBack, onCompleteTask }) {
@@ -25,6 +26,21 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
   const [receiveItem, setReceiveItem] = useState(null);
   const [receiveData, setReceiveData] = useState({ qty: '', poItemId: '', locationId: '', maxQty: 0 });
   const [isReceiving, setIsReceiving] = useState(false);
+
+  // ГРАФІК ВИЇЗДІВ МОНТАЖНОЇ БРИГАДИ (хто / коли)
+  const [visits, setVisits] = useState([]);
+  const [team, setTeam] = useState([]);
+  const [isAddingVisit, setIsAddingVisit] = useState(false);
+  const [newVisitDate, setNewVisitDate] = useState('');
+  const [newVisitNotes, setNewVisitNotes] = useState('');
+  const [isSavingVisit, setIsSavingVisit] = useState(false);
+  const [addingWorkerToVisitId, setAddingWorkerToVisitId] = useState(null);
+  const [selectedWorkerId, setSelectedWorkerId] = useState('');
+
+  // МОНІТОРИНГ СТАНЦІЇ (назва станції моніторингу + програма/платформа)
+  const [monitoringData, setMonitoringData] = useState({ monitoring_station_name: '', monitoring_program: '' });
+  const [isEditingMonitoring, setIsEditingMonitoring] = useState(false);
+  const [isSavingMonitoring, setIsSavingMonitoring] = useState(false);
 
   const getCurrentUserId = async () => {
     if (employeeProfile?.id) return employeeProfile.id;
@@ -68,7 +84,105 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
 
   useEffect(() => {
     fetchBom();
+    fetchVisits();
+    fetchMonitoringData();
   }, [dealId]);
+
+  // ====================== МОНІТОРИНГ СТАНЦІЇ ======================
+  const fetchMonitoringData = async () => {
+    const { data } = await supabase.from('deals').select('monitoring_station_name, monitoring_program').eq('id', dealId).single();
+    if (data) {
+      setMonitoringData({
+        monitoring_station_name: data.monitoring_station_name || '',
+        monitoring_program: data.monitoring_program || ''
+      });
+    }
+  };
+
+  const handleSaveMonitoring = async () => {
+    setIsSavingMonitoring(true);
+    try {
+      const { error } = await supabase.from('deals').update({
+        monitoring_station_name: monitoringData.monitoring_station_name || null,
+        monitoring_program: monitoringData.monitoring_program || null
+      }).eq('id', dealId);
+      if (error) throw error;
+      setIsEditingMonitoring(false);
+    } catch (err) {
+      alert('Помилка збереження даних моніторингу: ' + err.message);
+    } finally {
+      setIsSavingMonitoring(false);
+    }
+  };
+
+  // ====================== ГРАФІК ВИЇЗДІВ ======================
+  const fetchVisits = async () => {
+    const { data } = await supabase
+      .from('installations')
+      .select('*, installation_workers(id, worker_id, users(full_name))')
+      .eq('deal_id', dealId)
+      .order('scheduled_date', { ascending: true });
+    setVisits(data || []);
+
+    const { data: teamData } = await supabase.from('users').select('id, full_name, role').eq('is_active', true);
+    setTeam(teamData || []);
+  };
+
+  const handleAddVisit = async (e) => {
+    e.preventDefault();
+    if (!newVisitDate) return;
+    setIsSavingVisit(true);
+    try {
+      const { error } = await supabase.from('installations').insert([{
+        deal_id: dealId,
+        scheduled_date: newVisitDate,
+        notes: newVisitNotes || null,
+        is_ready: false
+      }]);
+      if (error) throw error;
+      setNewVisitDate(''); setNewVisitNotes(''); setIsAddingVisit(false);
+      fetchVisits();
+    } catch (err) {
+      alert('Помилка додавання виїзду: ' + err.message);
+    } finally {
+      setIsSavingVisit(false);
+    }
+  };
+
+  const handleToggleReady = async (visit) => {
+    await supabase.from('installations').update({ is_ready: !visit.is_ready }).eq('id', visit.id);
+    fetchVisits();
+  };
+
+  const handleDeleteVisit = async (visit) => {
+    if (!window.confirm('Видалити цей виїзд і всіх призначених монтажників?')) return;
+    try {
+      await supabase.from('installation_workers').delete().eq('installation_id', visit.id);
+      const { error } = await supabase.from('installations').delete().eq('id', visit.id);
+      if (error) throw error;
+      fetchVisits();
+    } catch (err) {
+      alert('Помилка видалення виїзду: ' + err.message);
+    }
+  };
+
+  const handleAddWorker = async (visitId) => {
+    if (!selectedWorkerId) return;
+    try {
+      const { error } = await supabase.from('installation_workers').insert([{ installation_id: visitId, worker_id: selectedWorkerId }]);
+      if (error) throw error;
+      setSelectedWorkerId('');
+      setAddingWorkerToVisitId(null);
+      fetchVisits();
+    } catch (err) {
+      alert('Помилка призначення монтажника: ' + err.message);
+    }
+  };
+
+  const handleRemoveWorker = async (workerRowId) => {
+    await supabase.from('installation_workers').delete().eq('id', workerRowId);
+    fetchVisits();
+  };
 
   // ====================== ЛОГІКА МОНТАЖУ ======================
   const openMountModal = (item) => {
@@ -95,7 +209,15 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
     setIsMounting(true);
     try {
       const remainingToMount = Number(mountItem.quantity_planned || 0) - Number(mountItem.quantity_mounted || 0);
-      if (amountToMount > remainingToMount) throw new Error(`Не можна змонтувати більше плану.`);
+      if (amountToMount > remainingToMount) {
+        const newPlanned = Number(mountItem.quantity_planned || 0) + (amountToMount - remainingToMount);
+        if (!window.confirm(`Кількість перевищує план (${mountItem.quantity_planned} ${mountItem.unit}). Скоригувати план до ${newPlanned} ${mountItem.unit} і продовжити?`)) {
+          setIsMounting(false);
+          return;
+        }
+        const { error: planError } = await supabase.from('deal_bom').update({ quantity_planned: newPlanned }).eq('id', mountItem.bom_id);
+        if (planError) throw planError;
+      }
 
       const userId = await getCurrentUserId();
       const readyOnSite = getReadyOnSiteQty(mountItem);
@@ -278,13 +400,105 @@ export default function DealInstallation({ dealId, onProgressUpdate, onBack, onC
       {/* ОСНОВНИЙ КОНТЕНТ: СПИСОК ЗАВДАНЬ */}
       <div className="p-4 md:p-6 space-y-6 flex-1 overflow-y-auto">
         <div className="animate-fade-in space-y-4">
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-start gap-3">
-             <FaTools className="text-slate-400 mt-0.5 shrink-0"/>
-             <p className="text-xs text-slate-500 font-medium">
-               Фіксуйте кількість обладнання, що була встановлена на об'єкті. Якщо товар приїхав прямо на об'єкт від постачальника, спочатку натисніть <strong className="text-amber-600">"Прийняти поставку"</strong>, а потім звітуйте про його монтаж.
-             </p>
+          {/* МОНІТОРИНГ СТАНЦІЇ */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2"><FaWifi className="text-sky-500"/> Моніторинг станції</h3>
+              {!isEditingMonitoring && (
+                <button onClick={() => setIsEditingMonitoring(true)} className="text-[10px] font-black uppercase text-sky-700 bg-sky-50 hover:bg-sky-100 px-3 py-1.5 rounded-lg border border-sky-200 flex items-center gap-1.5 transition-colors">
+                  <FaEdit size={10}/> {monitoringData.monitoring_station_name || monitoringData.monitoring_program ? 'Редагувати' : 'Заповнити'}
+                </button>
+              )}
+            </div>
+
+            {isEditingMonitoring ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 animate-fade-in">
+                <div>
+                  <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 ml-1">Назва станції моніторингу</label>
+                  <input type="text" autoFocus value={monitoringData.monitoring_station_name} onChange={e => setMonitoringData({...monitoringData, monitoring_station_name: e.target.value})} placeholder="Напр: СЕС-Іваненко-01" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-sky-500"/>
+                </div>
+                <div>
+                  <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 ml-1">Програма / платформа моніторингу</label>
+                  <input type="text" value={monitoringData.monitoring_program} onChange={e => setMonitoringData({...monitoringData, monitoring_program: e.target.value})} placeholder="Напр: SolarmanPV, SolisCloud..." className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-sky-500"/>
+                </div>
+                <div className="sm:col-span-2 flex gap-2 justify-end">
+                  <button onClick={() => { setIsEditingMonitoring(false); fetchMonitoringData(); }} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">Скасувати</button>
+                  <button onClick={handleSaveMonitoring} disabled={isSavingMonitoring} className="px-4 py-2 bg-sky-500 hover:bg-sky-600 text-white text-xs font-black uppercase tracking-widest rounded-lg transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"><FaSave size={12}/> {isSavingMonitoring ? 'Збереження...' : 'Зберегти'}</button>
+                </div>
+              </div>
+            ) : (
+              monitoringData.monitoring_station_name || monitoringData.monitoring_program ? (
+                <div className="flex flex-wrap gap-2 text-xs font-bold text-slate-700">
+                  {monitoringData.monitoring_station_name && <span className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">Станція: {monitoringData.monitoring_station_name}</span>}
+                  {monitoringData.monitoring_program && <span className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">Програма: {monitoringData.monitoring_program}</span>}
+                </div>
+              ) : (
+                <div className="text-center py-3 text-xs font-bold text-slate-400 uppercase tracking-widest border-2 border-dashed border-slate-200 rounded-xl">Дані моніторингу ще не внесено</div>
+              )
+            )}
           </div>
-          
+
+          {/* ГРАФІК ВИЇЗДІВ МОНТАЖНОЇ БРИГАДИ */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2"><FaCalendarAlt className="text-amber-500"/> Графік виїздів</h3>
+              <button onClick={() => setIsAddingVisit(!isAddingVisit)} className="text-[10px] font-black uppercase text-amber-700 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded-lg border border-amber-200 flex items-center gap-1.5 transition-colors">
+                <FaPlus size={10}/> Додати виїзд
+              </button>
+            </div>
+
+            {isAddingVisit && (
+              <form onSubmit={handleAddVisit} className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex flex-col sm:flex-row gap-2 animate-fade-in">
+                <input type="date" required autoFocus value={newVisitDate} onChange={e => setNewVisitDate(e.target.value)} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-500"/>
+                <input type="text" placeholder="Нотатки (необов'язково)" value={newVisitNotes} onChange={e => setNewVisitNotes(e.target.value)} className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium outline-none focus:border-amber-500"/>
+                <button type="submit" disabled={isSavingVisit} className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-black uppercase tracking-widest transition-colors disabled:opacity-50">{isSavingVisit ? '...' : 'Зберегти'}</button>
+              </form>
+            )}
+
+            {visits.length === 0 ? (
+              <div className="text-center py-6 text-xs font-bold text-slate-400 uppercase tracking-widest border-2 border-dashed border-slate-200 rounded-xl">Виїздів ще не заплановано</div>
+            ) : (
+              <div className="space-y-2">
+                {visits.map(visit => (
+                  <div key={visit.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <div className="flex flex-wrap justify-between items-center gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-slate-800">{new Date(visit.scheduled_date).toLocaleDateString('uk-UA')}</span>
+                        {visit.notes && <span className="text-xs text-slate-500">{visit.notes}</span>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => handleToggleReady(visit)} className={`text-[9px] font-black uppercase px-2 py-1 rounded-md border transition-colors ${visit.is_ready ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'}`}>
+                          {visit.is_ready ? 'Готово' : 'Заплановано'}
+                        </button>
+                        <button onClick={() => handleDeleteVisit(visit)} className="p-1.5 text-slate-300 hover:text-rose-500 transition-colors"><FaTrash size={12}/></button>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      {(visit.installation_workers || []).map(w => (
+                        <span key={w.id} className="inline-flex items-center gap-1.5 text-[10px] font-bold bg-white border border-slate-200 px-2 py-1 rounded-lg">
+                          {w.users?.full_name}
+                          <button onClick={() => handleRemoveWorker(w.id)} className="text-slate-300 hover:text-rose-500"><FaTimes size={9}/></button>
+                        </span>
+                      ))}
+                      {addingWorkerToVisitId === visit.id ? (
+                        <div className="flex items-center gap-1">
+                          <select value={selectedWorkerId} onChange={e => setSelectedWorkerId(e.target.value)} className="text-[10px] font-bold px-2 py-1.5 bg-white border border-slate-200 rounded-lg outline-none cursor-pointer">
+                            <option value="">Оберіть...</option>
+                            {team.map(u => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
+                          </select>
+                          <button onClick={() => handleAddWorker(visit.id)} className="p-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg transition-colors"><FaCheck size={10}/></button>
+                          <button onClick={() => setAddingWorkerToVisitId(null)} className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-600 rounded-lg transition-colors"><FaTimes size={10}/></button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setAddingWorkerToVisitId(visit.id)} className="text-[10px] font-bold text-amber-600 hover:bg-amber-50 px-2 py-1 rounded-lg border border-dashed border-amber-200 transition-colors">+ Монтажник</button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 gap-4">
             {bomItems.length === 0 ? (
               <div className="py-16 text-center text-slate-400 font-bold border-2 border-dashed border-slate-200 rounded-2xl bg-white">Специфікація порожня. Додайте позиції на етапі комплектації.</div>

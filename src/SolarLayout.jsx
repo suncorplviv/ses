@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { 
-  FaChartLine, FaSolarPanel, FaUsers, FaMoneyBillWave, FaWarehouse, 
-  FaUserTie, FaTasks, FaSignOutAlt, FaBars, FaTimes 
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import {
+  FaChartLine, FaSolarPanel, FaUsers, FaMoneyBillWave, FaWarehouse,
+  FaUserTie, FaTasks, FaSignOutAlt, FaBars, FaTimes, FaCashRegister, FaCalendarAlt,
+  FaCalendarCheck
 } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -12,20 +13,35 @@ import { useAuth } from './AuthProvider';
 const MotionDiv = motion.div;
 const MotionAside = motion.aside;
 
-// Меню без "Налаштувань", оскільки їх прибрали для всіх
+// Порядок — за пріоритетом щоденної роботи: спершу огляд і угоди,
+// потім оперативка (завдання, планер), далі довідкові розділи
 const navItems = [
   { name: 'Огляд', path: '/overview', icon: FaChartLine },
   { name: 'Угоди', path: '/deals', icon: FaSolarPanel },
+  { name: 'Завдання', path: '/tasks', icon: FaTasks },
+  { name: 'Планер', path: '/planner', icon: FaCalendarCheck },
   { name: 'Клієнти', path: '/clients', icon: FaUsers },
   { name: 'Фінанси', path: '/finance', icon: FaMoneyBillWave },
+  { name: 'Продажі', path: '/sales', icon: FaCashRegister },
   { name: 'Склад', path: '/inventory', icon: FaWarehouse },
+  { name: 'Монтажі', path: '/calendar', icon: FaCalendarAlt },
   { name: 'Команда', path: '/staff', icon: FaUserTie },
-  { name: 'Завдання', path: '/tasks', icon: FaTasks },
 ];
 
 export default function SolarLayout() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Клік по вже активному пункту меню не перемонтовує сторінку (react-router цього не робить
+  // сам), тому дані можуть виглядати застарілими, якщо їх додали в іншій вкладці/сесії.
+  // Форсуємо повне оновлення саме в цьому випадку — решта навігації лишається швидкою SPA-навігацією.
+  const handleNavClick = (e, path) => {
+    if (location.pathname === path) {
+      e.preventDefault();
+      window.location.reload();
+    }
+  };
   
   const { employeeProfile, signOut } = useAuth();
 
@@ -36,8 +52,8 @@ export default function SolarLayout() {
   // Фільтруємо пункти меню залежно від прав доступу
   const visibleNavItems = navItems.filter(item => {
     if (isManagement) return true; // Керівництво бачить усе
-    // Звичайні працівники бачать лише "Команду" та "Завдання"
-    return item.path === '/tasks' || item.path === '/staff';
+    // Звичайні працівники бачать лише "Команду", "Завдання" та "Планер"
+    return item.path === '/tasks' || item.path === '/staff' || item.path === '/planner';
   });
 
   const getInitials = (name) => {
@@ -73,6 +89,7 @@ export default function SolarLayout() {
             <NavLink
               key={item.path}
               to={item.path}
+              onClick={(e) => handleNavClick(e, item.path)}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-sm font-medium
                 ${isActive
@@ -158,11 +175,11 @@ export default function SolarLayout() {
                 {/* Мобільна навігація */}
                 <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto custom-scrollbar">
                     {visibleNavItems.map((item) => (
-                        <NavLink 
-                          key={item.path} 
-                          to={item.path} 
-                          onClick={() => setIsMobileMenuOpen(false)} 
-                          className={({ isActive }) => `flex items-center gap-4 px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${isActive ? 'bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`} 
+                        <NavLink
+                          key={item.path}
+                          to={item.path}
+                          onClick={(e) => { handleNavClick(e, item.path); setIsMobileMenuOpen(false); }}
+                          className={({ isActive }) => `flex items-center gap-4 px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${isActive ? 'bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
                         >
                             <item.icon className="w-5 h-5 shrink-0" /> <span>{item.name}</span>
                         </NavLink>

@@ -13,11 +13,13 @@ const movementLabels = {
   write_off: 'Списання',
   adjustment: 'Інвентаризація',
   in: 'Прихід',
-  out: 'Видача'
+  out: 'Видача',
+  sale: 'Продаж',
+  sale_return: 'Повернення з продажу'
 };
 
-const isOutgoingMovement = (type) => ['out', 'write_off', 'issue_to_deal'].includes(type);
-const isIncomingMovement = (type) => ['in', 'receive', 'return'].includes(type);
+const isOutgoingMovement = (type) => ['out', 'write_off', 'issue_to_deal', 'sale'].includes(type);
+const isIncomingMovement = (type) => ['in', 'receive', 'return', 'sale_return'].includes(type);
 const isNeutralMovement = (type) => ['transfer', 'adjustment'].includes(type);
 
 export default function MovementsTab({ movements, searchTerm }) {
@@ -39,7 +41,8 @@ export default function MovementsTab({ movements, searchTerm }) {
       m.document_number?.toLowerCase().includes(term) ||
       m.deals?.custom_id?.toString().includes(term) ||
       m.from_location?.name?.toLowerCase().includes(term) ||
-      m.to_location?.name?.toLowerCase().includes(term);
+      m.to_location?.name?.toLowerCase().includes(term) ||
+      m.sales?.clients?.name?.toLowerCase().includes(term);
 
     const isOut = isOutgoingMovement(m.movement_type);
     const matchType = filterType === 'all' 
@@ -83,9 +86,9 @@ export default function MovementsTab({ movements, searchTerm }) {
       'Товар': m.products?.name || 'Невідомий товар',
       'SKU': m.products?.sku || '-',
       'Кількість': `${isOutgoingMovement(m.movement_type) ? '-' : isNeutralMovement(m.movement_type) ? '' : '+'}${m.quantity}`,
-      'Угода / Об\'єкт': m.deals ? `№${m.deals.custom_id}` : '-',
-      'Звідки': m.from_location?.name || '-',
-      'Куди': m.to_location?.name || '-',
+      'Угода / Продаж': m.deals ? `СЕС №${m.deals.custom_id}` : m.sales ? `Продаж №${m.sales.custom_id}` : '-',
+      'Звідки': m.from_location?.name || (m.movement_type === 'sale_return' ? `Клієнт: ${m.sales?.clients?.name || ''}` : '-'),
+      'Куди': m.to_location?.name || (m.movement_type === 'sale' ? `Клієнт: ${m.sales?.clients?.name || ''}` : '-'),
       'Документ': m.document_number || '-',
       'Відповідальний': m.users?.full_name || 'Система',
       'Коментар': m.notes || '-'
@@ -191,6 +194,10 @@ export default function MovementsTab({ movements, searchTerm }) {
                         <div className="text-xs font-bold text-amber-600 bg-amber-50 inline-block px-2 py-1 rounded">
                           СЕС №{m.deals.custom_id}
                         </div>
+                      ) : m.sales ? (
+                        <div className="text-xs font-bold text-emerald-600 bg-emerald-50 inline-block px-2 py-1 rounded">
+                          Продаж №{m.sales.custom_id}
+                        </div>
                       ) : (
                         <span className="text-slate-300">-</span>
                       )}
@@ -199,7 +206,15 @@ export default function MovementsTab({ movements, searchTerm }) {
                            <FaClipboardList /> {m.document_number}
                         </div>
                       )}
-                      {(m.from_location?.name || m.to_location?.name) && (
+                      {m.movement_type === 'sale' ? (
+                        <div className="text-[10px] font-bold text-slate-400 mt-1">
+                          {m.from_location?.name || 'Склад'} → Клієнт: {m.sales?.clients?.name || '—'}
+                        </div>
+                      ) : m.movement_type === 'sale_return' ? (
+                        <div className="text-[10px] font-bold text-slate-400 mt-1">
+                          Клієнт: {m.sales?.clients?.name || '—'} → {m.to_location?.name || 'Склад'}
+                        </div>
+                      ) : (m.from_location?.name || m.to_location?.name) && (
                         <div className="text-[10px] font-bold text-slate-400 mt-1">
                           {m.from_location?.name || 'Постачальник'} → {m.to_location?.name || 'Списано'}
                         </div>

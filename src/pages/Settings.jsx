@@ -19,8 +19,15 @@ export default function Settings() {
     priority: 'Середній',
     deadline_days: 2,
     default_role: 'Менеджер з продажу',
-    observer_role: 'Немає'
+    observer_role: 'Немає',
+    position: 1
   });
+
+  // Наступний вільний порядковий номер для етапу (щоб завдання виконувались по черзі)
+  const getNextPosition = (stageId, templatesList) => {
+    const existing = templatesList.filter(t => t.stage_id === stageId).map(t => t.position || 0);
+    return existing.length > 0 ? Math.max(...existing) + 1 : 1;
+  };
 
   // Стейти для кастомної модалки видалення
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -41,9 +48,9 @@ export default function Settings() {
     
     setStages(stData || []);
     setTemplates(ttData || []);
-    
+
     if (stData?.length > 0) {
-      setNewTemplate(prev => ({ ...prev, stage_id: stData[0].id }));
+      setNewTemplate(prev => ({ ...prev, stage_id: stData[0].id, position: getNextPosition(stData[0].id, ttData || []) }));
     }
     setLoading(false);
   };
@@ -57,11 +64,12 @@ export default function Settings() {
       priority: newTemplate.priority,
       deadline_days: parseInt(newTemplate.deadline_days),
       default_role: newTemplate.default_role,
-      observer_role: newTemplate.observer_role === "Немає" ? null : newTemplate.observer_role
+      observer_role: newTemplate.observer_role === "Немає" ? null : newTemplate.observer_role,
+      position: parseInt(newTemplate.position) || 1
     }]);
 
     if (!error) {
-      setNewTemplate({ ...newTemplate, title: '', description: '' });
+      setNewTemplate({ ...newTemplate, title: '', description: '', position: getNextPosition(newTemplate.stage_id, [...templates, { stage_id: newTemplate.stage_id, position: newTemplate.position }]) });
       fetchData();
     } else {
       alert("Помилка створення: " + error.message);
@@ -127,13 +135,23 @@ export default function Settings() {
           
           <div className="space-y-1">
             <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Етап воронки</label>
-            <select 
+            <select
               className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-amber-500 cursor-pointer"
               value={newTemplate.stage_id}
-              onChange={e => setNewTemplate({...newTemplate, stage_id: e.target.value})}
+              onChange={e => setNewTemplate({...newTemplate, stage_id: e.target.value, position: getNextPosition(e.target.value, templates)})}
             >
               {stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Порядок (черга виконання)</label>
+            <input
+              required type="number" min="1"
+              className="w-full p-3 bg-sky-50/50 border border-sky-100 rounded-xl text-sm font-black outline-none focus:border-sky-500 text-center"
+              value={newTemplate.position}
+              onChange={e => setNewTemplate({...newTemplate, position: e.target.value})}
+            />
           </div>
 
           <div className="space-y-1 lg:col-span-2">
@@ -215,7 +233,7 @@ export default function Settings() {
       {/* СПИСОК ІСНУЮЧИХ ШАБЛОНІВ ПО ЕТАПАХ */}
       <div className="space-y-8">
         {stages.map(stage => {
-          const stageTemplates = templates.filter(t => t.stage_id === stage.id);
+          const stageTemplates = templates.filter(t => t.stage_id === stage.id).sort((a, b) => (a.position || 0) - (b.position || 0));
           if (stageTemplates.length === 0) return null; // Не показуємо пусті етапи для чистоти
 
           return (
@@ -233,6 +251,7 @@ export default function Settings() {
                     
                     <div className="flex-1">
                       <div className="flex items-center gap-3 flex-wrap mb-2">
+                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-sky-100 text-sky-700">#{tt.position ?? '?'}</span>
                         <p className="text-sm font-black text-slate-800">{tt.title}</p>
                         <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${tt.priority.includes('🔴') ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
                           {tt.priority}

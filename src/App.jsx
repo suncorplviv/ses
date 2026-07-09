@@ -16,10 +16,13 @@ import Clients from './pages/ClientsPage';
 import Deals from './pages/Deals';
 import DealDetails from './pages/DealDetails';
 import PaymentsPage from './pages/PaymentsPage';
+import Sales from './pages/SalesPage';
 import Inventory from './pages/Inventory';
 import Staff from './pages/Staff';
 import MyTasks from './pages/MyTasks';
+import PlannerPage from './pages/PlannerPage';
 import Settings from './pages/Settings';
+import InstallationCalendar from './pages/InstallationCalendar';
 
 const ProtectedRoute = () => {
   const { user, loading } = useAuth();
@@ -94,6 +97,7 @@ function App() {
 
             {/* Доступні всім */}
             <Route path="/tasks" element={<MyTasks />} />
+            <Route path="/planner" element={<PlannerPage />} />
             <Route path="/staff" element={<Staff />} />
 
             {/* Тільки керівництво */}
@@ -143,6 +147,15 @@ function App() {
             />
 
             <Route
+              path="/sales"
+              element={
+                <ManagementRoute>
+                  <Sales />
+                </ManagementRoute>
+              }
+            />
+
+            <Route
               path="/inventory"
               element={
                 <ManagementRoute>
@@ -156,6 +169,15 @@ function App() {
               element={
                 <ManagementRoute>
                   <Settings />
+                </ManagementRoute>
+              }
+            />
+
+            <Route
+              path="/calendar"
+              element={
+                <ManagementRoute>
+                  <InstallationCalendar />
                 </ManagementRoute>
               }
             />

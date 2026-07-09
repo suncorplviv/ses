@@ -348,7 +348,7 @@ export default function ClientsPage() {
                                <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">{deal.stage}</span>
                             </div>
                             <h4 className="text-sm font-black text-slate-800 leading-tight mb-1">{deal.title || 'Угода без назви'}</h4>
-                            <p className="text-[10px] font-bold text-slate-500 uppercase">Бюджет: {Number(deal.final_budget).toLocaleString()} $ • Ціль: {deal.goal}</p>
+                            <p className="text-[10px] font-bold text-slate-500 uppercase">Вартість: {Number(deal.final_budget).toLocaleString()} $ • Ціль: {deal.goal}</p>
                           </div>
                           <div className="flex items-center justify-between md:justify-end w-full md:w-auto gap-4">
                             <span className="text-[10px] font-bold text-slate-400">{new Date(deal.created_at).toLocaleDateString()}</span>

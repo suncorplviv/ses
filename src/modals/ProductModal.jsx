@@ -33,7 +33,8 @@ export default function ProductModal({ isOpen, onClose, productToEdit, onSaveSuc
     power_kw: '',
     capacity_kwh: '',
     voltage_type: '',
-    is_tracked: true
+    is_tracked: true,
+    min_stock_quantity: ''
   });
 
   async function fetchCategories() {
@@ -65,15 +66,17 @@ export default function ProductModal({ isOpen, onClose, productToEdit, onSaveSuc
           power_kw: productToEdit.power_kw || '',
           capacity_kwh: productToEdit.capacity_kwh || '',
           voltage_type: productToEdit.voltage_type || '',
-          is_tracked: productToEdit.is_tracked ?? true
+          is_tracked: productToEdit.is_tracked ?? true,
+          min_stock_quantity: productToEdit.min_stock_quantity ?? ''
         });
-        
+
         const cat = categories.find(c => c.id === productToEdit.category_id);
         if (cat) setCategorySearch(cat.name);
       } else {
         setFormData({
-          name: '', sku: '', category_id: '', product_type: '', unit: 'шт', 
-          currency: 'USD', cost_price: 0, sale_price: 0, power_kw: '', capacity_kwh: '', voltage_type: '', is_tracked: true
+          name: '', sku: '', category_id: '', product_type: '', unit: 'шт',
+          currency: 'USD', cost_price: 0, sale_price: 0, power_kw: '', capacity_kwh: '', voltage_type: '', is_tracked: true,
+          min_stock_quantity: ''
         });
         setCategorySearch('');
       }
@@ -107,7 +110,8 @@ export default function ProductModal({ isOpen, onClose, productToEdit, onSaveSuc
       power_kw: formData.power_kw ? parseFloat(formData.power_kw) : null,
       capacity_kwh: formData.capacity_kwh ? parseFloat(formData.capacity_kwh) : null,
       voltage_type: formData.voltage_type || null,
-      is_tracked: formData.is_tracked
+      is_tracked: formData.is_tracked,
+      min_stock_quantity: parseFloat(formData.min_stock_quantity) || 0
     };
 
     let error;
@@ -316,6 +320,14 @@ export default function ProductModal({ isOpen, onClose, productToEdit, onSaveSuc
                 <span className="text-[10px] md:text-xs font-black uppercase text-slate-700 tracking-widest">Вести складський облік (Залишки)</span>
               </label>
             </div>
+
+            {formData.is_tracked && (
+              <div className="animate-fade-in">
+                <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 ml-1">Мінімальний залишок (поріг сповіщення)</label>
+                <input type="number" min="0" step="any" placeholder="0" value={formData.min_stock_quantity} onChange={e => setFormData({...formData, min_stock_quantity: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-amber-500 transition-colors shadow-inner"/>
+                <p className="text-[9px] text-slate-400 mt-1.5 ml-1 font-medium leading-tight">Не блокує списання чи резерв нижче цього значення — лише позначає "низький залишок" в інтерфейсі (в майбутньому — тригер сповіщення в Telegram).</p>
+              </div>
+            )}
           </div>
           
           <div className="h-4"></div>
