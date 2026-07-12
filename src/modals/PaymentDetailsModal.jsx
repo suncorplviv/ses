@@ -80,7 +80,11 @@ export default function PaymentDetailsModal({ isOpen, onClose, payment, debtStat
     }
   };
 
-  const isBusiness = payment.deals?.clients?.client_type === 'Юридична особа';
+  // Оплата продажу керується зі сторінки "Продажі" — тут лише перегляд,
+  // інакше суми в картці продажу розсинхронізуються з касою
+  const isSalePayment = !!payment.sale_id;
+  const clientInfo = payment.deals?.clients || payment.sales?.clients;
+  const isBusiness = clientInfo?.client_type === 'Юридична особа';
   const pDate = new Date(payment.payment_date);
 
   return (
@@ -93,7 +97,8 @@ export default function PaymentDetailsModal({ isOpen, onClose, payment, debtStat
               <FaMoneyBillWave className="text-amber-400" /> Платіж #{payment.custom_id}
             </h3>
             <p className="text-[10px] text-slate-400 font-bold uppercase mt-1 tracking-widest flex items-center gap-1.5">
-              {isBusiness ? <FaBuilding /> : <FaUser />} {payment.deals?.clients?.name || 'Невказано'}
+              {isBusiness ? <FaBuilding /> : <FaUser />} {clientInfo?.name || 'Невказано'}
+              {isSalePayment && <span className="text-emerald-400">• Продаж №{payment.sales?.custom_id || '—'}</span>}
             </p>
           </div>
           <button onClick={onClose} className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"><FaTimes size={18} /></button>
@@ -201,7 +206,14 @@ export default function PaymentDetailsModal({ isOpen, onClose, payment, debtStat
         </div>
 
         <div className="p-6 border-t border-slate-100 flex justify-between items-center bg-white shrink-0 gap-3">
-          {isConfirmingDelete ? (
+          {isSalePayment ? (
+            <>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex-1">
+                Оплата продажу — редагується на сторінці «Продажі»
+              </span>
+              <button onClick={onClose} className="px-6 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-colors">Закрити</button>
+            </>
+          ) : isConfirmingDelete ? (
             <div className="flex items-center gap-2 flex-1">
               <span className="text-xs font-bold text-rose-600 flex-1">Видалити цей платіж безповоротно?</span>
               <button onClick={handleDelete} disabled={isDeleting} className="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-black uppercase tracking-widest">{isDeleting ? '...' : 'Так, видалити'}</button>

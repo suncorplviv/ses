@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { 
-  FaPlus, FaSearch, FaTimes, FaBuilding, FaUser, 
-  FaFolderOpen, FaArrowRight, FaSolarPanel, FaPhoneAlt, FaEdit, FaSave
+import {
+  FaPlus, FaSearch, FaTimes, FaBuilding, FaUser,
+  FaFolderOpen, FaArrowRight, FaSolarPanel, FaPhoneAlt, FaEdit, FaSave, FaMicrochip
 } from 'react-icons/fa';
+import DealEquipmentModal from '../components/DealEquipmentModal';
 
 export default function ClientsPage() {
   const navigate = useNavigate();
@@ -33,6 +34,9 @@ export default function ClientsPage() {
   // Стейти для режиму редагування
   const [isEditingClient, setIsEditingClient] = useState(false);
   const [editClientForm, setEditClientForm] = useState(null);
+
+  // Обладнання станції (моніторинг + серійники) по конкретній угоді
+  const [equipmentDeal, setEquipmentDeal] = useState(null);
 
   const fetchClients = async () => {
     setLoading(true);
@@ -352,6 +356,13 @@ export default function ClientsPage() {
                           </div>
                           <div className="flex items-center justify-between md:justify-end w-full md:w-auto gap-4">
                             <span className="text-[10px] font-bold text-slate-400">{new Date(deal.created_at).toLocaleDateString()}</span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setEquipmentDeal(deal); }}
+                              title="Обладнання: моніторинг та серійні номери"
+                              className="w-8 h-8 rounded-full bg-indigo-50 text-indigo-500 hover:bg-indigo-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
+                            >
+                              <FaMicrochip size={13}/>
+                            </button>
                             <button className="w-8 h-8 rounded-full bg-slate-50 text-slate-400 group-hover:bg-amber-500 group-hover:text-white flex items-center justify-center transition-colors"><FaArrowRight size={12}/></button>
                           </div>
                        </div>
@@ -484,6 +495,12 @@ export default function ClientsPage() {
         </div>
       )}
 
+      <DealEquipmentModal
+        isOpen={!!equipmentDeal}
+        onClose={() => setEquipmentDeal(null)}
+        dealId={equipmentDeal?.id}
+        dealLabel={equipmentDeal ? `СЕС №${equipmentDeal.custom_id} — ${equipmentDeal.title || ''}` : ''}
+      />
     </div>
   );
 }

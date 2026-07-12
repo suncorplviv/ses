@@ -45,10 +45,10 @@ const IncomeTab = forwardRef(function IncomeTab({ searchTerm, filters }, ref) {
   const fetchData = async () => {
     setLoading(true);
     try {
+      // Каса показує ВСІ надходження: і по угодах (СЕС), і по продажах зі складу
       const { data: paymentsData, error: paymentsError } = await supabase
         .from('payments')
-        .select('*, deals(*, clients(*)), users(full_name)')
-        .not('deal_id', 'is', null)
+        .select('*, deals(*, clients(*)), sales(custom_id, clients(name, client_type, custom_id)), users(full_name)')
         .order('payment_date', { ascending: false });
 
       if (paymentsError) throw paymentsError;
@@ -101,7 +101,9 @@ const IncomeTab = forwardRef(function IncomeTab({ searchTerm, filters }, ref) {
         p.deals?.custom_id?.toString().includes(search) ||
         p.deals?.clients?.custom_id?.toString().includes(search) ||
         p.deals?.title?.toLowerCase().includes(search) ||
-        p.deals?.clients?.name?.toLowerCase().includes(search)
+        p.deals?.clients?.name?.toLowerCase().includes(search) ||
+        p.sales?.custom_id?.toString().includes(search) ||
+        p.sales?.clients?.name?.toLowerCase().includes(search)
       ) : true;
 
       const pDate = new Date(p.payment_date);
@@ -191,12 +193,13 @@ const IncomeTab = forwardRef(function IncomeTab({ searchTerm, filters }, ref) {
     const exportData = filteredPayments.map(p => {
       const debtStatus = getDealDebtStatus(p.deals);
       const pDate = new Date(p.payment_date);
+      const clientInfo = p.deals?.clients || p.sales?.clients;
 
       return {
         "Дата транзакції": pDate.toLocaleString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-        "Клієнт": p.deals?.clients?.name || 'Невказано',
-        "ID Клієнта": p.deals?.clients?.custom_id || '',
-        "Угода / Об'єкт": p.deals?.title || 'Невказано',
+        "Клієнт": clientInfo?.name || 'Невказано',
+        "ID Клієнта": clientInfo?.custom_id || '',
+        "Угода / Об'єкт": p.deals?.title || (p.sale_id ? `Продаж зі складу №${p.sales?.custom_id || ''}` : 'Невказано'),
         "ID Угоди": p.deals?.custom_id || '',
         "Внесена Сума (USD)": Number(p.amount_usd) || 0,
         "Курс (UAH/USD)": Number(p.exchange_rate) || 0,
@@ -276,8 +279,10 @@ const IncomeTab = forwardRef(function IncomeTab({ searchTerm, filters }, ref) {
                 <tr><td colSpan="6" className="text-center p-12 font-bold text-sm text-slate-400">Платежів не знайдено за обраними критеріями</td></tr>
               ) : (
                 paginatedPayments.map((payment) => {
+                  const isSalePayment = !!payment.sale_id;
+                  const clientInfo = payment.deals?.clients || payment.sales?.clients;
                   const debtStatus = getDealDebtStatus(payment.deals);
-                  const isBusiness = payment.deals?.clients?.client_type === 'Юридична особа';
+                  const isBusiness = clientInfo?.client_type === 'Юридична особа';
                   const pDate = new Date(payment.payment_date);
 
                   return (
@@ -291,11 +296,16 @@ const IncomeTab = forwardRef(function IncomeTab({ searchTerm, filters }, ref) {
                           <span className={`p-1.5 rounded-md ${isBusiness ? 'bg-amber-50 text-amber-600' : 'bg-slate-50 text-slate-400'}`}>
                             {isBusiness ? <FaBuilding size={12} /> : <FaUser size={12} />}
                           </span>
-                          <span className="font-bold text-slate-900 text-sm group-hover:text-amber-600 transition-colors">{payment.deals?.clients?.name || 'Невказано'}</span>
+                          <span className="font-bold text-slate-900 text-sm group-hover:text-amber-600 transition-colors">{clientInfo?.name || 'Невказано'}</span>
                         </div>
                         {payment.deals && (
                           <div className="text-[10px] text-amber-600 font-black uppercase tracking-widest mt-1 flex items-center gap-1.5">
                             {payment.deals.title} <FaArrowRight size={8} />
+                          </div>
+                        )}
+                        {isSalePayment && (
+                          <div className="text-[10px] text-emerald-600 font-black uppercase tracking-widest mt-1">
+                            Продаж зі складу №{payment.sales?.custom_id || '—'}
                           </div>
                         )}
                       </td>
@@ -310,7 +320,9 @@ const IncomeTab = forwardRef(function IncomeTab({ searchTerm, filters }, ref) {
                         <div><span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-100 rounded-md text-[9px] font-black uppercase tracking-widest">{payment.payment_category}</span></div>
                       </td>
                       <td className="p-5 text-center">
-                        {debtStatus.isPaid ? (
+                        {isSalePayment ? (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-widest border border-emerald-100">Продаж</span>
+                        ) : debtStatus.isPaid ? (
                           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-widest border border-emerald-100"><FaCheckCircle size={12} /> Оплачено</span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-black uppercase tracking-widest border border-rose-100"><FaExclamationCircle size={12} /> Борг: {debtStatus.debt.toLocaleString()} $</span>

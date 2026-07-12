@@ -17,6 +17,7 @@ import InitialContactModal from '../components/InitialContactModal';
 import DocumentUploadModal from '../components/DocumentUploadModal';
 import DealSpecification from '../components/DealSpecification';
 import DealInstallation from '../components/DealInstallation';
+import DealCrewSchedule from '../components/DealCrewSchedule';
 import DealAdditionalMaterials from '../components/DealAdditionalMaterials';
 import DeliveryOrganizationModal from '../modals/DeliveryOrganizationModal';
 import DealPaymentsModal from '../components/DealPaymentsModal';
@@ -84,6 +85,7 @@ export default function MyTasks() {
   const cpRegex                 = /комерційн|кп/i;
   const documentCloseRegex      = /підписання|закриття угоди|договір|документ/i;
   const deliveryRegex           = /доставк|транспорт|відвантаж|завантаж/i;
+  const crewRegex               = /бригад/i;
   const installRegex            = /монтажн|бригад|фізичн|змонтовано/i;
   const inventoryRegex          = /резерв|обладнан|специфікаці/i;
   const additionalMaterialsRegex = /додатков.*матеріал|розхідник|закупка/i;
@@ -550,6 +552,9 @@ export default function MyTasks() {
               ) : inventoryMode === 'additional_materials' ? (
                 <DealAdditionalMaterials dealId={selectedTask.deal_id} onBack={() => setIsInventoryOpen(false)}
                   onCompleteTask={() => { setIsInventoryOpen(false); handleCompleteTask(null, selectedTask); }}/>
+              ) : inventoryMode === 'crew' ? (
+                <DealCrewSchedule dealId={selectedTask.deal_id} onBack={() => setIsInventoryOpen(false)}
+                  onCompleteTask={selectedTask.status !== 'Виконана' ? () => { setIsInventoryOpen(false); handleCompleteTask(null, selectedTask); } : undefined}/>
               ) : (
                 <DealInstallation dealId={selectedTask.deal_id} onBack={() => setIsInventoryOpen(false)}
                   onCompleteTask={() => { setIsInventoryOpen(false); handleCompleteTask(null, selectedTask); }}/>
@@ -949,8 +954,25 @@ export default function MyTasks() {
                         </div>
                       )}
 
+                      {/* ОРГАНІЗАЦІЯ МОНТАЖНОЇ БРИГАДИ */}
+                      {selectedTask.title.match(crewRegex) && (
+                        <div className="border p-6 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-6 shadow-sm bg-amber-50 border-amber-200">
+                          <div className="flex items-center gap-5">
+                            <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center shrink-0 shadow-sm"><FaHardHat size={28}/></div>
+                            <div>
+                              <h3 className="text-sm font-black text-amber-900 uppercase tracking-widest mb-1.5">Графік бригади</h3>
+                              <p className="text-xs text-amber-700 font-medium leading-relaxed">Планування виїздів та призначення монтажників на об'єкт.</p>
+                            </div>
+                          </div>
+                          <button onClick={() => { setInventoryMode('crew'); setIsInventoryOpen(true); }}
+                            className="w-full md:w-auto bg-amber-500 hover:bg-amber-400 text-slate-900 px-8 py-4 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-amber-500/20 active:scale-95">
+                            Відкрити графік
+                          </button>
+                        </div>
+                      )}
+
                       {/* ЖУРНАЛ МОНТАЖУ */}
-                      {selectedTask.title.match(installRegex) && (
+                      {selectedTask.title.match(installRegex) && !selectedTask.title.match(crewRegex) && (
                         <div className="border p-6 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-6 shadow-sm bg-emerald-50 border-emerald-200">
                           <div className="flex items-center gap-5">
                             <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center shrink-0 shadow-sm"><FaHardHat size={28}/></div>

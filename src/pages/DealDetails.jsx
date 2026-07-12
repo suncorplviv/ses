@@ -3,10 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../AuthProvider'; 
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  FaArrowLeft, FaInfoCircle, FaHistory, FaEye, 
-  FaUserTie, FaChevronRight
+import {
+  FaArrowLeft, FaInfoCircle, FaHistory, FaEye,
+  FaUserTie, FaChevronRight, FaMicrochip
 } from 'react-icons/fa';
+import DealEquipmentModal from '../components/DealEquipmentModal';
 
 import DealTasks from '../components/DealTasks';
 import SiteSurveyModal from '../components/SiteSurveyModal';
@@ -16,6 +17,7 @@ import DealInstallation from '../components/DealInstallation';
 import InitialContactModal from '../components/InitialContactModal';
 import DocumentUploadModal from '../components/DocumentUploadModal'; 
 import DeliveryOrganizationModal from '../modals/DeliveryOrganizationModal';
+import DealCrewSchedule from '../components/DealCrewSchedule';
 
 import DealPaymentsModal from '../components/DealPaymentsModal';
 import DealAdditionalMaterials from '../components/DealAdditionalMaterials';
@@ -55,6 +57,10 @@ export default function DealDetails() {
   const [isInitialContactOpen, setIsInitialContactOpen] = useState(false);
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
   const [isDeliveryOpen, setIsDeliveryOpen] = useState(false);
+  const [isEquipmentOpen, setIsEquipmentOpen] = useState(false);
+
+  // Графік монтажної бригади (повноекранний простір, inventoryMode='crew')
+  const [crewTask, setCrewTask] = useState(null);
 
   const [inventoryProgress, setInventoryProgress] = useState({ total: 0, reserved: 0, mounted: 0 });
   const [taskRefreshTrigger, setTaskRefreshTrigger] = useState(0);
@@ -188,12 +194,19 @@ export default function DealDetails() {
               № {deal.custom_id}
             </span>
             <span className={`px-1.5 md:px-3 py-0.5 md:py-1.5 text-[9px] md:text-xs font-black rounded-md md:rounded-lg uppercase tracking-widest border shadow-sm ${
-              deal.status === 'Угоду виграно' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
-              deal.status === 'Угоду програно' ? 'bg-rose-50 text-rose-600 border-rose-100' : 
+              deal.status === 'Угоду виграно' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+              deal.status === 'Угоду програно' ? 'bg-rose-50 text-rose-600 border-rose-100' :
               'bg-amber-50 text-amber-700 border-amber-100'
             }`}>
               {deal.status}
             </span>
+            <button
+              onClick={() => setIsEquipmentOpen(true)}
+              title="Обладнання станції: моніторинг та серійні номери"
+              className="px-1.5 md:px-3 py-0.5 md:py-1.5 text-[9px] md:text-xs font-black rounded-md md:rounded-lg uppercase tracking-widest border shadow-sm bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-500 hover:text-white transition-colors flex items-center gap-1.5"
+            >
+              <FaMicrochip size={11}/> <span className="hidden sm:inline">Обладнання</span>
+            </button>
           </div>
 
           <div className="flex flex-col gap-1 md:gap-2 min-w-0 w-full">
@@ -286,13 +299,23 @@ export default function DealDetails() {
                     } : undefined}
                   />
                 ) : inventoryMode === 'additional_materials' ? (
-                  <DealAdditionalMaterials 
+                  <DealAdditionalMaterials
                     dealId={id}
                     onBack={forceInventoryView ? () => setForceInventoryView(false) : undefined}
                     onCompleteTask={addMaterialsTask ? () => {
                         setForceInventoryView(false);
                         completeTaskAndCheckStage(addMaterialsTask);
                         setAddMaterialsTask(null);
+                    } : undefined}
+                  />
+                ) : inventoryMode === 'crew' ? (
+                  <DealCrewSchedule
+                    dealId={id}
+                    onBack={() => { setForceInventoryView(false); setCrewTask(null); fetchDealFullData(); }}
+                    onCompleteTask={crewTask && crewTask.status !== 'Виконана' ? () => {
+                        setForceInventoryView(false);
+                        completeTaskAndCheckStage(crewTask);
+                        setCrewTask(null);
                     } : undefined}
                   />
                 ) : null}
@@ -343,6 +366,11 @@ export default function DealDetails() {
                   onOpenAdditionalMaterials={(task) => {
                     setAddMaterialsTask(task);
                     setInventoryMode('additional_materials');
+                    setForceInventoryView(true);
+                  }}
+                  onOpenCrewSchedule={(task) => {
+                    setCrewTask(task);
+                    setInventoryMode('crew');
                     setForceInventoryView(true);
                   }}
                 />
@@ -431,18 +459,26 @@ export default function DealDetails() {
       />
 
       {isPaymentsOpen && (
-        <DealPaymentsModal 
-          dealId={id} 
+        <DealPaymentsModal
+          dealId={id}
           clientId={deal?.client_id}
-          dealBudget={deal?.final_budget} 
-          isOpen={isPaymentsOpen} 
-          onClose={() => setIsPaymentsOpen(false)} 
+          dealBudget={deal?.final_budget}
+          isOpen={isPaymentsOpen}
+          onClose={() => setIsPaymentsOpen(false)}
           onSave={() => {
             setIsPaymentsOpen(false);
             completeTaskAndCheckStage(paymentsTask);
-          }} 
+          }}
         />
       )}
+
+      <DealEquipmentModal
+        isOpen={isEquipmentOpen}
+        onClose={() => { setIsEquipmentOpen(false); fetchDealFullData(); }}
+        dealId={id}
+        dealLabel={`СЕС №${deal?.custom_id} — ${deal?.title || ''}`}
+      />
+
     </div>
   );
 }

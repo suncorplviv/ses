@@ -12,21 +12,22 @@ import {
 import UniversalDocumentViewer from './UniversalDocumentViewer';
 import ConfirmDialog from './ConfirmDialog';
 
-export default function DealTasks({ 
-  deal, 
-  stages, 
-  viewingStageId, 
-  onDealUpdate, 
-  onOpenSurveyModal, 
-  onOpenInitialContact, 
+export default function DealTasks({
+  deal,
+  stages,
+  viewingStageId,
+  onDealUpdate,
+  onOpenSurveyModal,
+  onOpenInitialContact,
   onOpenFileUpload,
   onOpenSurveyViewer,
-  onOpenSpecification, 
+  onOpenSpecification,
   onOpenDelivery,
   onOpenInstallationJournal,
   onOpenPaymentsModal,
   onOpenAdditionalMaterials,
-  refreshTrigger 
+  onOpenCrewSchedule,
+  refreshTrigger
 }) {
   const { employeeProfile } = useAuth();
   
@@ -183,7 +184,9 @@ export default function DealTasks({
       // Документні завдання: клік по назві = перегляд результату (додати файли — окрема кнопка)
       if (title.match(/комерційн|кп|догов|рішенн|документ/i)) { handleOpenDocs(null, task); return; }
       if (title.match(/доставк|транспорт|завантаж/i)) { if (onOpenDelivery) { onOpenDelivery(task); return; } }
-      if (title.match(/монтажн|бригад|фізичн|змонтовано/i)) { if (onOpenInstallationJournal) { onOpenInstallationJournal(task); return; } }
+      // Графік бригади — окремий інструмент, перевіряється ДО журналу монтажу
+      if (title.match(/бригад/i)) { if (onOpenCrewSchedule) { onOpenCrewSchedule(task); return; } }
+      if (title.match(/монтажн|фізичн|змонтовано/i)) { if (onOpenInstallationJournal) { onOpenInstallationJournal(task); return; } }
       if (title.match(/резерв|обладнанн|специфікаці/i)) { if (onOpenSpecification) { onOpenSpecification(task); return; } }
       if (title.match(/оплат|платіж|каса|рахунок/i)) { if (onOpenPaymentsModal) { onOpenPaymentsModal(task); return; } }
       if (title.match(/зв.язатися|контакт|кваліфікаці|оперативно/i)) { if (onOpenInitialContact) { onOpenInitialContact(task); return; } }
@@ -201,7 +204,9 @@ export default function DealTasks({
       // Виправлено регулярку на "догов", "рішенн"
       if (title.match(/комерційн|кп|догов|рішенн|документ/i)) { if (onOpenFileUpload) { onOpenFileUpload(task); return; } }
       if (title.match(/доставк|транспорт|завантаж/i)) { if (onOpenDelivery) { onOpenDelivery(task); return; } }
-      if (title.match(/монтажн|бригад|фізичн|змонтовано/i)) { if (onOpenInstallationJournal) { onOpenInstallationJournal(task); return; } }
+      // Графік бригади — окремий інструмент, перевіряється ДО журналу монтажу
+      if (title.match(/бригад/i)) { if (onOpenCrewSchedule) { onOpenCrewSchedule(task); return; } }
+      if (title.match(/монтажн|фізичн|змонтовано/i)) { if (onOpenInstallationJournal) { onOpenInstallationJournal(task); return; } }
       if (title.match(/резерв|обладнанн|специфікаці/i)) { if (onOpenSpecification) { onOpenSpecification(task); return; } }
     }
 
@@ -454,7 +459,8 @@ export default function DealTasks({
           if (tLower.match(/додатков|матеріал|закупка/i)) smartHint = "Замовити матеріали";
           if (tLower.match(/резерв|обладнанн|специфікаці/i)) smartHint = "Відкрити комплектацію";
           if (tLower.match(/доставк|транспорт|завантаж/i)) smartHint = "Заповнити доставку";
-          if (tLower.match(/монтажн|бригад|фізичн|змонтовано/i)) smartHint = "Журнал монтажу";
+          if (tLower.match(/монтажн|фізичн|змонтовано/i)) smartHint = "Журнал монтажу";
+          if (tLower.match(/бригад/i)) smartHint = "Графік бригади";
           if (task.requires_file) smartHint = `Прикріпити файл: ${task.file_label}`;
 
           return (

@@ -24,15 +24,23 @@ export default function DeliveryOrganizationModal({ isOpen, onClose, deal, task,
   // Стейт форми доставки
   const [selectedItems, setSelectedItems] = useState({});
   const [formData, setFormData] = useState({
-    delivery_at: '', 
-    address: '', 
-    client_contact: deal?.clients?.phone || '', 
-    receiver_name: deal?.clients?.name || '', 
-    tracking_number: '', 
-    shipping_cost: '', 
+    delivery_at: '',
+    address: '',
+    client_contact: deal?.clients?.phone || '',
+    receiver_name: deal?.clients?.name || '',
+    tracking_number: '',
+    shipping_cost: '',       // вартість у гривні
+    exchange_rate: '',       // курс ₴/$ для перерахунку у витрати
     cost_payer: 'company',
     notes: ''
   });
+
+  // USD-еквівалент вартості доставки (для витрат компанії)
+  const shippingCostUsd = (() => {
+    const uah = parseFloat(formData.shipping_cost) || 0;
+    const rate = parseFloat(formData.exchange_rate) || 0;
+    return uah > 0 && rate > 0 ? uah / rate : 0;
+  })();
 
   // Логіка перевізників (Combobox)
   const [carriers, setCarriers] = useState([]);
@@ -157,13 +165,14 @@ export default function DeliveryOrganizationModal({ isOpen, onClose, deal, task,
     });
     setSelectedItems(initialSelected);
     
-    setFormData(prev => ({ 
-      ...prev, 
+    setFormData(prev => ({
+      ...prev,
       address: prefilledAddress !== null ? prefilledAddress : prev.address,
-      tracking_number: '', 
+      tracking_number: '',
       shipping_cost: '',
+      exchange_rate: '',
       cost_payer: 'company',
-      notes: '' 
+      notes: ''
     }));
     
     setSelectedCarrier(null);
@@ -198,6 +207,10 @@ export default function DeliveryOrganizationModal({ isOpen, onClose, deal, task,
     if (!selectedCarrier && !isCreatingCarrier) return alert('Оберіть перевізника зі списку або створіть нового!');
     if (isCreatingCarrier && !newCarrierData.name.trim()) return alert('Введіть назву перевізника!');
     if (formData.shipping_cost && Number(formData.shipping_cost) < 0) return alert('Вартість доставки не може бути від\'ємною!');
+    // Якщо доставку оплачує компанія — потрібен курс, щоб зафіксувати витрату в USD
+    if (formData.cost_payer === 'company' && Number(formData.shipping_cost) > 0 && !(parseFloat(formData.exchange_rate) > 0)) {
+      return alert('Вкажіть курс ₴/$ — вартість доставки рахується у витрати компанії в доларовому еквіваленті.');
+    }
 
     setIsSubmitting(true);
     try {
@@ -219,13 +232,16 @@ export default function DeliveryOrganizationModal({ isOpen, onClose, deal, task,
         finalCarrierId = newC.id;
       }
 
-      // Зберігаємо накладну
+      // Зберігаємо накладну (вартість у ₴ + курс + USD-еквівалент)
       const { data: delivery, error: dError } = await supabase.from('deal_deliveries').insert([{
         deal_id: deal.id,
         task_id: task?.id || null,
         carrier_id: finalCarrierId,
         tracking_number: formData.tracking_number || null,
         shipping_cost: formData.shipping_cost ? Number(formData.shipping_cost) : 0,
+        currency: 'UAH',
+        exchange_rate: parseFloat(formData.exchange_rate) || null,
+        shipping_cost_usd: shippingCostUsd > 0 ? Number(shippingCostUsd.toFixed(2)) : null,
         cost_payer: formData.cost_payer,
         delivery_at: formData.delivery_at || null,
         address: formData.address,
@@ -235,8 +251,40 @@ export default function DeliveryOrganizationModal({ isOpen, onClose, deal, task,
         status: 'planned',
         created_by: employeeProfile?.id
       }]).select().single();
-      
+
       if (dError) throw dError;
+
+      // Витрата компанії: якщо доставку оплачуємо ми — фіксуємо у Видатках (каса)
+      if (formData.cost_payer === 'company' && shippingCostUsd > 0) {
+        const CATEGORY_NAME = 'Логістика / Доставка';
+        let { data: cat } = await supabase
+          .from('expense_categories')
+          .select('id')
+          .eq('name', CATEGORY_NAME)
+          .maybeSingle();
+        if (!cat) {
+          const { data: newCat, error: catErr } = await supabase
+            .from('expense_categories')
+            .insert([{ name: CATEGORY_NAME, created_by: employeeProfile?.id || null }])
+            .select('id')
+            .single();
+          if (catErr) throw catErr;
+          cat = newCat;
+        }
+
+        const carrierNameForExpense = isCreatingCarrier ? newCarrierData.name.trim() : selectedCarrier?.name;
+        const { error: expErr } = await supabase.from('expenses').insert([{
+          category_id: cat.id,
+          deal_id: deal.id,
+          amount_usd: Number(shippingCostUsd.toFixed(2)),
+          exchange_rate: parseFloat(formData.exchange_rate),
+          amount_uah: Number(formData.shipping_cost),
+          expense_date: formData.delivery_at ? new Date(formData.delivery_at).toISOString() : new Date().toISOString(),
+          notes: `Доставка по СЕС №${deal.custom_id} (${carrierNameForExpense || 'перевізник'})${formData.tracking_number ? `, ТТН ${formData.tracking_number}` : ''}`,
+          created_by: employeeProfile?.id || null
+        }]);
+        if (expErr) throw expErr;
+      }
 
       // Зберігаємо товари у накладну
       const itemsPayload = itemsToDeliver.map(item => ({
@@ -334,7 +382,7 @@ export default function DeliveryOrganizationModal({ isOpen, onClose, deal, task,
                         {del.status === 'delivered' ? 'Доставлено' : 'Заплановано / В дорозі'}
                       </div>
                       <div className="text-xs font-bold text-slate-600">
-                        {del.shipping_cost > 0 ? `${del.shipping_cost} ₴` : 'Вартість не вказана'}
+                        {del.shipping_cost > 0 ? `${del.shipping_cost} ₴${del.shipping_cost_usd ? ` (~$${Number(del.shipping_cost_usd).toFixed(2)})` : ''}` : 'Вартість не вказана'}
                       </div>
                     </div>
                   </div>
@@ -387,9 +435,13 @@ export default function DeliveryOrganizationModal({ isOpen, onClose, deal, task,
                   <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Вартість доставки</p>
                   <p className="font-bold text-slate-800">
                     {selectedDelivery.shipping_cost > 0 ? `${selectedDelivery.shipping_cost} ₴` : '-'}
+                    {selectedDelivery.shipping_cost_usd > 0 && (
+                      <span className="text-emerald-600 ml-1">(~${Number(selectedDelivery.shipping_cost_usd).toFixed(2)})</span>
+                    )}
                   </p>
                   <p className="text-[9px] text-slate-500 uppercase mt-0.5 font-bold">
                     Оплачує: {selectedDelivery.cost_payer === 'client' ? 'Клієнт' : 'Компанія'}
+                    {selectedDelivery.cost_payer !== 'client' && selectedDelivery.shipping_cost_usd > 0 && ' · У видатках'}
                   </p>
                 </div>
                 <div className="md:col-span-4">
@@ -547,7 +599,16 @@ export default function DeliveryOrganizationModal({ isOpen, onClose, deal, task,
                 <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 ml-1">Вартість доставки (₴)</label>
                 <div className="relative">
                   <FaMoneyBillWave className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input type="number" min="0" value={formData.shipping_cost} onChange={e => setFormData({...formData, shipping_cost: e.target.value})} placeholder="0.00" className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-amber-500" />
+                  <input type="number" min="0" step="any" value={formData.shipping_cost} onChange={e => setFormData({...formData, shipping_cost: e.target.value})} placeholder="0.00" className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-amber-500" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 ml-1">Курс (₴/$) та еквівалент</label>
+                <div className="flex items-center gap-2">
+                  <input type="number" min="0" step="any" value={formData.exchange_rate} onChange={e => setFormData({...formData, exchange_rate: e.target.value})} placeholder="Напр. 41.5" className="w-24 px-3 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-amber-500" />
+                  <span className={`text-sm font-black whitespace-nowrap ${shippingCostUsd > 0 ? 'text-emerald-600' : 'text-slate-300'}`}>
+                    = ${shippingCostUsd > 0 ? shippingCostUsd.toFixed(2) : '0.00'}
+                  </span>
                 </div>
               </div>
               <div>
@@ -556,6 +617,9 @@ export default function DeliveryOrganizationModal({ isOpen, onClose, deal, task,
                   <option value="company">Компанія (Ми)</option>
                   <option value="client">Клієнт</option>
                 </select>
+                {formData.cost_payer === 'company' && (
+                  <p className="text-[9px] font-bold text-amber-600 mt-1 ml-1">Сума піде у Видатки компанії ($)</p>
+                )}
               </div>
               
               <div className="md:col-span-3 border-t border-slate-100 my-1"></div>

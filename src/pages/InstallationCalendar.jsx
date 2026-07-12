@@ -4,8 +4,9 @@ import { supabase } from '../supabaseClient';
 import { getCurrentMonthRange } from '../utils/dateTime';
 import {
   FaCalendarAlt, FaSearch, FaUserTie, FaMapMarkerAlt, FaArrowRight,
-  FaCheckCircle, FaBuilding, FaUser, FaUsers, FaClock
+  FaCheckCircle, FaBuilding, FaUser, FaUsers, FaClock, FaPlus
 } from 'react-icons/fa';
+import InstallationCrewModal from '../modals/InstallationCrewModal';
 
 export default function InstallationCalendar() {
   const navigate = useNavigate();
@@ -14,6 +15,10 @@ export default function InstallationCalendar() {
   const [loading, setLoading] = useState(true);
 
   const [viewMode, setViewMode] = useState('objects'); // 'objects' | 'employee'
+
+  // Планування / редагування виїзду
+  const [isCrewModalOpen, setIsCrewModalOpen] = useState(false);
+  const [editingVisit, setEditingVisit] = useState(null);
 
   // --- Режим "За об'єктами" ---
   const [searchTerm, setSearchTerm] = useState('');
@@ -103,7 +108,8 @@ export default function InstallationCalendar() {
     return (
       <div
         key={visit.id}
-        onClick={() => visit.deal_id && navigate(`/deals/${visit.deal_id}`)}
+        onClick={() => { setEditingVisit(visit); setIsCrewModalOpen(true); }}
+        title="Редагувати виїзд та склад бригади"
         className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-amber-400 hover:shadow-md transition-all cursor-pointer group"
       >
         <div className="flex justify-between items-start gap-3 mb-2">
@@ -135,7 +141,13 @@ export default function InstallationCalendar() {
               <span key={w.id} className="text-[10px] font-bold bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg flex items-center gap-1"><FaUserTie size={9} className="text-amber-500" /> {w.users?.full_name}</span>
             ))}
           </div>
-          <FaArrowRight className="text-slate-300 group-hover:text-amber-500 transition-colors shrink-0" size={12} />
+          <button
+            onClick={(e) => { e.stopPropagation(); visit.deal_id && navigate(`/deals/${visit.deal_id}`); }}
+            title="Відкрити угоду"
+            className="p-2 text-slate-300 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors shrink-0"
+          >
+            <FaArrowRight size={12} />
+          </button>
         </div>
       </div>
     );
@@ -151,12 +163,20 @@ export default function InstallationCalendar() {
             Календар монтажів
           </h1>
 
-          <div className="flex bg-slate-100 p-1.5 rounded-2xl">
-            <button onClick={() => setViewMode('objects')} className={`flex items-center gap-2 px-4 py-2.5 text-xs font-black uppercase tracking-widest rounded-xl transition-all ${viewMode === 'objects' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-              <FaMapMarkerAlt size={12} /> За об'єктами
-            </button>
-            <button onClick={() => setViewMode('employee')} className={`flex items-center gap-2 px-4 py-2.5 text-xs font-black uppercase tracking-widest rounded-xl transition-all ${viewMode === 'employee' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-              <FaUsers size={12} /> За працівником
+          <div className="flex items-center gap-3 flex-wrap justify-center">
+            <div className="flex bg-slate-100 p-1.5 rounded-2xl">
+              <button onClick={() => setViewMode('objects')} className={`flex items-center gap-2 px-4 py-2.5 text-xs font-black uppercase tracking-widest rounded-xl transition-all ${viewMode === 'objects' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                <FaMapMarkerAlt size={12} /> За об'єктами
+              </button>
+              <button onClick={() => setViewMode('employee')} className={`flex items-center gap-2 px-4 py-2.5 text-xs font-black uppercase tracking-widest rounded-xl transition-all ${viewMode === 'employee' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                <FaUsers size={12} /> За працівником
+              </button>
+            </div>
+            <button
+              onClick={() => { setEditingVisit(null); setIsCrewModalOpen(true); }}
+              className="px-5 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 shadow-lg shadow-slate-900/10 active:scale-95"
+            >
+              <FaPlus size={12} /> Запланувати виїзд
             </button>
           </div>
         </div>
@@ -253,6 +273,14 @@ export default function InstallationCalendar() {
           )}
         </div>
       )}
+
+      <InstallationCrewModal
+        isOpen={isCrewModalOpen}
+        onClose={() => { setIsCrewModalOpen(false); setEditingVisit(null); }}
+        installation={editingVisit}
+        deal={editingVisit?.deals ? { id: editingVisit.deal_id, custom_id: editingVisit.deals.custom_id, title: editingVisit.deals.title } : null}
+        onSave={fetchData}
+      />
     </div>
   );
 }
